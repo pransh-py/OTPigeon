@@ -1,205 +1,125 @@
-# WhatsApp OTP POC
+# OTPigeon
 
-Separate proof-of-concept for OTP login using Flutter, FastAPI, MongoDB, and a swappable OTP delivery layer.
+A self-hostable verification gateway for small app teams. Your backend creates a
+scoped challenge, submits a code, and reads an event timeline. Your application
+owns its users and sessions.
 
+**The first milestone is test-only.** Delivery uses a simulated mock outbox.
+Live keys cannot send messages. The original WhatsApp Web automation PoC is
+preserved behind explicit operator configuration and is excluded from Compose.
 
-## Current Status
+## Start locally
 
-Completed:
+Prerequisites: Docker with Compose and Python 3 for the environment initializer.
+From the repository root:
 
-- FastAPI backend scaffold.
-- Pydantic schemas for health, sender management, OTP request/resend, and OTP verification.
-- Working routes:
-  - `GET /health`
-  - `POST /set-sender`
-  - `GET /senders`
-  - `GET /senders/{sender_id}/status`
-  - `GET /senders/{sender_id}/qr`
-  - `POST /senders/{sender_id}/logout`
-  - `POST /otp/request`
-  - `POST /otp/resend`
-  - `POST /otp/verify`
-- Environment-based backend config.
-- MongoDB connection helper.
-- MongoDB OTP store layer with index setup and OTP record methods.
-- FastAPI startup wiring for MongoDB OTP indexes.
-- Sender abstraction with a mock console OTP sender.
-- OTP service with:
-  - 6-digit OTP generation using Python `secrets`
-  - salted SHA-256 OTP hashing
-  - MongoDB OTP storage
-  - OTP expiry handling
-  - resend cooldown handling
-  - max verification attempt handling
-  - secure hash comparison
-  - failed attempt tracking
-  - one-time OTP deletion after successful verification
-- API routes connected to the OTP service.
-- Local backend validation with MongoDB and Swagger/manual API calls.
-- Separate Node.js WhatsApp sender service using whatsapp-web.js.
-- Multi-session WhatsApp sender management:
-  - one sender session per sender phone number
-  - sender-specific QR login and LocalAuth persistence
-  - sender status, QR lookup, list, logout, and selected-sender OTP delivery
-- FastAPI WhatsApp sender adapter and admin proxy routes.
-- Git ignore rules for secrets, virtualenv, build artifacts, and WhatsApp session files.
-
-Current priority:
-
-- Manually validate the full FastAPI-to-WhatsApp flow with a test sender number.
-- Document reliability, failure modes, and the production risk clearly before Flutter.
-
-Not completed yet:
-
-- Full end-to-end validation with a real QR-linked sender session and receiver.
-- Flutter app.
-
-## Project Structure
-
-```text
-whatsapp_otp_poc/
-  backend/
-    app/
-      config.py
-      db.py
-      main.py
-      otp_service.py
-      otp_store.py
-      schemas.py
-      senders/
-        __init__.py
-        base.py
-        mock_sender.py
-    requirements.txt
-    .env.example
-  whatsapp-sender/
-    src/
-      index.js
-      senderManager.js
-      phone.js
-      messageTemplate.js
-    MANUAL_TESTING.md
-    package.json
-  PROJECT_CONTEXT.md
-  README.md
+```sh
+./scripts/dev.sh
 ```
 
-## Backend Setup
+This generates a private `.env` only if none exists, gives this checkout a unique
+Compose project/volume, builds the API, initializes a single-node MongoDB replica
+set, and waits for readiness. The API binds to `127.0.0.1:8000`; MongoDB has no
+published host port. Change `OTPIGEON_PORT` in `.env` if the port is already used.
+Existing environment files, databases, and WhatsApp sessions are not replaced.
 
-```bash
-cd backend
+API documentation: <http://127.0.0.1:8000/docs>.
+
+Create your application's project and issue a test key:
+
+```sh
+docker compose exec api python -m app.admin create-project --name "My application"
+docker compose exec api python -m app.admin issue-key --project PROJECT_ID --environment test
+```
+
+Replace `PROJECT_ID` with the returned ID. The second command displays the key
+once. Save it privately on your backend. Key listings contain metadata only:
+
+```sh
+docker compose exec api python -m app.admin list-keys --project PROJECT_ID
+docker compose exec api python -m app.admin revoke-key --key KEY_ID
+```
+
+## Complete the developer flow
+
+Read the test key into your terminal without putting it in shell history, then
+run the included backend example:
+
+```sh
+read -r OTPIGEON_API_KEY
+export OTPIGEON_API_KEY
+docker compose exec -e OTPIGEON_API_KEY api python examples/sample_backend.py
+unset OTPIGEON_API_KEY
+```
+
+Paste your key after `read` and press Enter. The example creates a challenge for
+the fictional `+12025550123`, reads its simulated code from the test outbox,
+verifies it, checks its project/destination/purpose context, creates a stand-in
+application session, and prints the event types. It prints neither the key, the
+code, nor the session token.
+
+Real integrations put the API key on the application backend. The browser calls
+that backend, which binds a challenge ID to its own pending user/flow. The test
+outbox is for trusted development code; do not expose it to a browser.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/challenges` | Create from `destination` and `purpose` |
+| `GET /v1/challenges/{id}` | Read state and timings |
+| `POST /v1/challenges/{id}/resend` | Rotate the code, preserving the challenge |
+| `POST /v1/challenges/{id}/verify` | Consume once using `{ "code": "123456" }` |
+| `GET /v1/challenges/{id}/events` | Read the challenge timeline |
+| `GET /v1/events` | Filter and paginate project/environment events |
+| `GET /v1/test/outbox?challenge_id={id}` | Read a pending simulated code with its owner's test key |
+
+All `/v1` endpoints require `Authorization: Bearer YOUR_KEY`. Create and resend
+also require an `Idempotency-Key` for each logical operation. Retries of that
+operation use the same key and body. Foreign project/environment challenges
+return 404. Live creates return `live_delivery_disabled` without generating a code.
+
+## What this milestone guarantees
+
+- Projects and environment-scoped keys stored as hashes, with revocation.
+- Challenge IDs scoped to project, environment, destination, and purpose.
+- Database transactions enforce single consumption and bounded concurrent
+  attempts, sends, cooldowns, and durable rolling budgets across API workers.
+- Idempotent create/resend retries replay the original response for 24 hours.
+- Separate verification/delivery states and append-only, masked event history.
+- Expiry is enforced at request time; challenge history is retained.
+- No `delivered` claim: mock acceptance is explicitly simulated.
+
+The project/environment transaction gate favors correctness over throughput.
+This milestone is for local and test use, **not public production deployment**.
+There is no account system, production abuse protection, automated history
+retention, official WhatsApp integration, or SMS integration yet.
+
+## Verification
+
+Install the backend development dependencies and point tests at an isolated
+MongoDB replica set. Each fixture creates and removes only its own random database:
+
+```sh
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+.venv/bin/pip install -r backend/requirements-dev.txt
+OTPIGEON_TEST_MONGODB_URL='mongodb://127.0.0.1:27017/?replicaSet=otpigeon_test' \
+  .venv/bin/python -m pytest backend/tests -q
+PUPPETEER_SKIP_DOWNLOAD=true npm ci --prefix whatsapp-sender
+npm test --prefix whatsapp-sender
 ```
 
-Health check:
+See [technical documentation](DOCUMENTATION.md), the
+[verification record](docs/verification/m1.md), and the
+[first-milestone prompt](docs/planning/gateway-m1-prompt.md).
 
-```bash
-curl http://127.0.0.1:8000/health
-```
+## Next milestones
 
-Expected response:
+An operator dashboard, a server SDK, official WhatsApp and one SMS adapter, and
+confirmed delivery receipts/webhooks. The current repository implements the
+bounded test-only foundation, not those later features.
 
-```json
-{"status":"ok"}
-```
+## Original WhatsApp Web PoC
 
-Request OTP:
-
-```bash
-curl -X POST http://127.0.0.1:8000/otp/request \
-  -H "Content-Type: application/json" \
-  -d '{"sender_phone":"+918637427358","phone":"+919876543210"}'
-```
-
-The mock sender prints the generated OTP in the backend console:
-
-```text
-[MOCK OTP] sender_phone=+918637427358 receiver_phone=+919876543210 otp=123456
-```
-
-Resend OTP:
-
-```bash
-curl -X POST http://127.0.0.1:8000/otp/resend \
-  -H "Content-Type: application/json" \
-  -d '{"sender_phone":"+918637427358","phone":"+919876543210"}'
-```
-
-Verify OTP:
-
-```bash
-curl -X POST http://127.0.0.1:8000/otp/verify \
-  -H "Content-Type: application/json" \
-  -d '{"phone":"+919876543210","otp":"123456"}'
-```
-
-Expected successful response:
-
-```json
-{"verified":true,"message":"otp verified successfully"}
-```
-
-## Config
-
-Sample config is documented in `backend/.env.example`.
-
-```env
-MONGODB_URL=mongodb://localhost:27017
-MONGODB_DB_NAME=whatsapp_otp_poc
-OTP_EXPIRY_SECONDS=300
-OTP_RESEND_COOLDOWN_SECONDS=60
-OTP_MAX_VERIFY_ATTEMPTS=5
-OTP_SENDER_MODE=mock
-WHATSAPP_SENDER_URL=http://127.0.0.1:3001
-WHATSAPP_SENDER_API_KEY=local-dev-key
-WHATSAPP_SENDER_TIMEOUT_SECONDS=10
-```
-
-Do not commit a real `.env` file.
-
-## WhatsApp Sender Setup
-
-The Node sender service is in `whatsapp-sender/`.
-
-```bash
-cd whatsapp-sender
-npm install
-npm start
-```
-
-The service listens on `http://127.0.0.1:3001` by default.
-
-Register a sender session through FastAPI:
-
-```bash
-curl -X POST http://127.0.0.1:8000/set-sender \
-  -H "Content-Type: application/json" \
-  -d '{"sender_phone":"+918637427358"}'
-```
-
-If the sender needs login, scan the QR from the Node terminal or call:
-
-```bash
-curl http://127.0.0.1:8000/senders/918637427358/qr
-```
-
-Poll status until `ready` is `true`:
-
-```bash
-curl http://127.0.0.1:8000/senders/918637427358/status
-```
-
-For detailed direct Node-service tests, see `whatsapp-sender/MANUAL_TESTING.md`.
-
-## Next Steps
-
-1. Run the Node sender service.
-2. Register a test sender number with `POST /set-sender`.
-3. Scan the QR and confirm the sender reaches `ready: true`.
-4. Set `OTP_SENDER_MODE=whatsapp` in `backend/.env`.
-5. Validate `POST /otp/request`, WhatsApp delivery, and `POST /otp/verify`.
-6. Document setup, limitations, failure modes, and account-ban/platform-term risks.
-7. Defer Flutter until WhatsApp delivery feasibility is tested.
+The Node service uses `whatsapp-web.js` browser automation rather than the
+paid official Meta messaging API. It remains experimental; reliability and
+account-policy risks remain. The legacy API is off by default. If you deliberately
+operate it, read the legacy section in [DOCUMENTATION.md](DOCUMENTATION.md).

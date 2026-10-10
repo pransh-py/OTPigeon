@@ -1,0 +1,49 @@
+services:
+  mongo:
+    image: mongo:8.2.3
+    command: ["mongod", "--replSet", "otpigeon", "--bind_ip_all"]
+    volumes:
+      - gateway-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  mongo-init:
+    image: mongo:8.2.3
+    depends_on:
+      mongo:
+        condition: service_healthy
+    entrypoint: ["mongosh", "--host", "mongo:27017", "--quiet", "--eval"]
+    command:
+      - >-
+        try { rs.status(); } catch (e) {
+          if (e.code !== 94) throw e;
+          rs.initiate({_id:'otpigeon',members:[{_id:0,host:'mongo:27017'}]});
+        }
+        for (let i=0;i<60;i++) {
+          if (db.hello().isWritablePrimary) quit(0);
+          sleep(1000);
+        }
+        quit(1);
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      MONGODB_URL: mongodb://mongo:27017/?replicaSet=otpigeon
+      MONGODB_DB_NAME: otpigeon_gateway
+      OTPIGEON_SECRET: ${OTPIGEON_SECRET:?Run scripts/init_local.py first}
+      OTPIGEON_ENABLE_LEGACY: "false"
+    ports:
+      - "127.0.0.1:${OTPIGEON_PORT:-8000}:8000"
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+volumes:
+  gateway-data:

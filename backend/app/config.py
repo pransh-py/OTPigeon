@@ -119,7 +119,7 @@ class Settings:
     #   X-SENDER-API-KEY
     whatsapp_sender_api_key: str = os.getenv(
         "WHATSAPP_SENDER_API_KEY",
-        "local-dev-key",
+        "",
     )
 
     # Timeout for HTTP calls from FastAPI to the Node sender.

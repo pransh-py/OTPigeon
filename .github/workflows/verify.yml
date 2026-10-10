@@ -1,0 +1,48 @@
+name: Verify gateway
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Start disposable replica set
+        run: |
+          docker run -d --name otpigeon-test-mongo -p 127.0.0.1:27017:27017 mongo:8.2.3 --replSet otpigeon_test --bind_ip_all
+          for i in $(seq 1 60); do
+            if docker exec otpigeon-test-mongo mongosh --quiet --eval 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)'; then break; fi
+            sleep 1
+          done
+          docker exec otpigeon-test-mongo mongosh --quiet --eval "rs.initiate({_id:'otpigeon_test',members:[{_id:0,host:'127.0.0.1:27017'}]}); for(let i=0;i<60;i++){if(db.hello().isWritablePrimary) quit(0); sleep(1000);} quit(1);"
+      - name: Backend contracts and concurrent workers
+        env:
+          OTPIGEON_TEST_MONGODB_URL: mongodb://127.0.0.1:27017/?replicaSet=otpigeon_test
+        run: |
+          pip install -r backend/requirements-dev.txt
+          python -m pytest backend/tests -q
+      - name: Legacy sender boundary
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: |
+          npm ci --ignore-scripts --prefix whatsapp-sender
+          npm test --prefix whatsapp-sender
+      - name: Container setup
+        run: |
+          python scripts/init_local.py
+          docker compose up --build -d --wait api
+      - name: Clean this job's disposable state
+        if: always()
+        run: |
+          if [ -f .env ]; then docker compose down -v; fi
+          docker rm -f otpigeon-test-mongo || true

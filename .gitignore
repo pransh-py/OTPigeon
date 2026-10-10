@@ -23,3 +23,7 @@ node_modules/
 .DS_Store
 .vscode/
 .idea/
+
+# Disposable labs, verification media, and local planning evidence
+.local/
+.pytest_cache/
