@@ -3,11 +3,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from app.config import settings
-from app.db import get_database
-from app.otp_service import OtpService
-from app.otp_store import OtpStore
-from app.schemas import (
+from otpigeon.config import settings
+from otpigeon.db import get_database
+from otpigeon.otp_service import OtpService
+from otpigeon.otp_store import OtpStore
+from otpigeon.schemas import (
     HealthResponse,
     OtpRequest,
     OtpRequestResponse,
@@ -18,10 +18,10 @@ from app.schemas import (
     SenderStatusResponse,
     SetSenderRequest,
 )
-from app.senders.base import OtpSender
-from app.senders.mock_sender import MockOtpSender
-from app.senders.whatsapp_sender_admin import WhatsappSenderAdmin
-from app.senders.whatsapp_http_sender import WhatsappHttpSender, WhatsappSenderError
+from otpigeon.senders.base import OtpSender
+from otpigeon.senders.mock_sender import MockOtpSender
+from otpigeon.senders.whatsapp_sender_admin import WhatsappSenderAdmin
+from otpigeon.senders.whatsapp_http_sender import WhatsappHttpSender, WhatsappSenderError
 
 
 # Official docs concept:
@@ -122,10 +122,7 @@ def get_otp_sender() -> OtpSender:
     # If someone sets OTP_SENDER_MODE=sms or mistypes "whatsapp", the backend
     # should refuse to start/use the service clearly instead of silently falling
     # back to mock or failing later in a confusing way.
-    raise ValueError(
-        "Unsupported OTP_SENDER_MODE. Expected 'mock' or 'whatsapp', "
-        f"got {settings.otp_sender_mode!r}."
-    )
+    raise ValueError(f"Unsupported OTP_SENDER_MODE. Expected 'mock' or 'whatsapp', got {settings.otp_sender_mode!r}.")
 
 
 def get_otp_service() -> OtpService:

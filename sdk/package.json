@@ -1,0 +1,13 @@
+{
+  "name": "otpigeon-sdk",
+  "version": "0.2.0-rc.1",
+  "description": "Server-side JavaScript SDK for the self-hosted OTPigeon verification gateway",
+  "type": "module",
+  "exports": {".": {"types": "./index.d.ts", "import": "./index.js"}},
+  "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
+  "engines": {"node": ">=22"},
+  "scripts": {"test": "node --test test/*.test.js"},
+  "license": "MIT",
+  "repository": {"type": "git", "url": "https://github.com/pransh-py/OTPigeon.git", "directory": "sdk"},
+  "publishConfig": {"access": "public"}
+}

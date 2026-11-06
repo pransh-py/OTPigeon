@@ -1,7 +1,7 @@
 import httpx
 
-from app.config import settings
-from app.senders.base import OtpSender
+from otpigeon.config import settings
+from otpigeon.senders.base import OtpSender
 
 
 # Official docs concept:

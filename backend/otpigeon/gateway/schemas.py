@@ -21,12 +21,28 @@ class ResendChallenge(StrictBody):
     pass
 
 
-EventType = Literal["requested", "provider_accepted", "provider_failed", "provider_unknown",
-                    "verify_failed", "verified", "expired", "superseded", "locked", "rate_limited"]
+EventType = Literal[
+    "requested",
+    "provider_accepted",
+    "provider_failed",
+    "provider_unknown",
+    "queued",
+    "dispatch_started",
+    "retry_scheduled",
+    "delivered",
+    "verify_failed",
+    "verified",
+    "expired",
+    "superseded",
+    "locked",
+    "rate_limited",
+]
 
 
 class Delivery(BaseModel):
-    status: Literal["not_attempted", "provider_accepted", "provider_failed", "unknown"]
+    status: Literal[
+        "not_attempted", "queued", "sending", "provider_accepted", "provider_failed", "unknown", "delivered"
+    ]
     provider: str
     simulated: bool
     reason: str | None
@@ -40,6 +56,7 @@ class ChallengeResponse(BaseModel):
     purpose: str
     status: Literal["pending", "verified", "expired", "locked", "superseded"]
     delivery: Delivery
+    created_at: datetime
     expires_at: datetime
     resend_available_at: datetime
     attempts_remaining: int
@@ -57,6 +74,7 @@ class Event(BaseModel):
     sequence: int
     timestamp: datetime
     challenge_id: str | None
+    generation: str | None = None
     type: EventType
     reason: str | None
     purpose: str | None

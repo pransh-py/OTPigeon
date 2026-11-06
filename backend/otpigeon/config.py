@@ -131,13 +131,11 @@ class Settings:
     # Our project significance:
     # If the WhatsApp sender service is stopped, stuck, or slow, /otp/request
     # should fail in a bounded amount of time instead of waiting indefinitely.
-    whatsapp_sender_timeout_seconds: float = float(
-        os.getenv("WHATSAPP_SENDER_TIMEOUT_SECONDS", "10")
-    )
+    whatsapp_sender_timeout_seconds: float = float(os.getenv("WHATSAPP_SENDER_TIMEOUT_SECONDS", "10"))
 
 
 # Create one shared settings object for the app to import.
 #
 # This keeps call sites simple:
-#   from app.config import settings
+#   from otpigeon.config import settings
 settings = Settings()

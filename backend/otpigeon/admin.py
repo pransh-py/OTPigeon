@@ -1,12 +1,13 @@
-"""Local operator commands. No HTTP administration surface is exposed."""
+"""Local operator commands; the dashboard exposes equivalent authenticated operations."""
+
 import argparse
 import asyncio
 import json
 
 from pymongo import AsyncMongoClient
 
-from app.gateway.config import GatewaySettings
-from app.gateway.service import GatewayService
+from otpigeon.gateway.config import GatewaySettings
+from otpigeon.gateway.service import GatewayService
 
 
 async def run(args):
@@ -26,7 +27,7 @@ async def run(args):
         print(json.dumps(result, indent=2))
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="OTPigeon local administration")
     commands = parser.add_subparsers(dest="command", required=True)
     project = commands.add_parser("create-project")
@@ -38,7 +39,7 @@ def main():
     listing.add_argument("--project", required=True)
     revoke = commands.add_parser("revoke-key")
     revoke.add_argument("--key", required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         asyncio.run(run(args))
     except ValueError as exc:

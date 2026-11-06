@@ -1,197 +1,93 @@
-# OTPigeon technical documentation
+# Gateway API and state reference
 
-## Architecture
+Version: 0.2.0rc1. See `/docs` and `/openapi.json` for generated request/response schemas.
 
-```mermaid
-flowchart LR
-    App[Application backend] -->|Project/environment API key| API[FastAPI gateway]
-    API --> Challenges[Challenge lifecycle]
-    Admin[Local admin CLI] --> Store
-    Challenges --> Store[MongoDB replica set]
-    Store --> Events[Append-only events]
-    Store --> Outbox[Privileged test outbox]
-    App -->|Successful verification| Session[Application-owned session]
-```
+## Authentication and isolation
 
-The CLI connects directly to MongoDB; it exposes no HTTP administration API.
-The gateway uses PyMongo's native async driver. A replica set is required because
-challenge state, budgets, events, and idempotency records commit together.
-Startup refuses a standalone MongoDB server or a missing/placeholder secret.
+Application calls use `Authorization: Bearer otpg_test_…` or `otpg_live_…`.
+A key identifies one project and environment. Cross-project/environment lookups return 404.
+Revocation is checked again inside the transaction. Live keys cannot read the test outbox.
+The single-operator dashboard uses a separate token, revocable eight-hour HttpOnly session,
+SameSite=Strict cookies, origin checks, CSRF tokens, and a shared database login limit.
+It is an installation administrator, not a multi-user organization/RBAC system.
 
-The legacy Node WhatsApp sender is not part of the default graph or Compose.
+## Endpoints
 
-## Storage and isolation
+| Method | Path | Behavior |
+| --- | --- | --- |
+| POST | `/v1/challenges` | `{destination, purpose}`; requires Idempotency-Key; 201 |
+| GET | `/v1/challenges/{id}` | Current state; materializes expiry if necessary |
+| GET | `/v1/challenges` | Newest first; optional status, before cursor, limit 1–100 |
+| POST | `/v1/challenges/{id}/resend` | Empty body; new generation, same challenge ID; requires Idempotency-Key |
+| POST | `/v1/challenges/{id}/verify` | `{code}` string of six ASCII digits; single-use result |
+| GET | `/v1/challenges/{id}/events` | Ascending sequence, after and limit |
+| GET | `/v1/events` | Scoped events; optional challenge_id, type, after, limit |
+| GET | `/v1/test/outbox?challenge_id=…` | Test key only; pending, unexpired simulated code |
+| GET | `/health` | Database connectivity/readiness and live-delivery mode |
 
-- `projects`: display name and provider configuration for `test` and `live`.
-  Test uses `mock`; live is unconfigured and disabled in this milestone.
-- `api_keys`: random high-entropy keys stored as SHA-256 digests, environment,
-  project, issue time, and revocation time. The raw key is shown only on issuance.
-- `challenges`: immutable ID, project/environment/destination/purpose scope,
-  HMAC code hash, generation, lifecycle, delivery outcome, expiry, and limits.
-- `gates`: one revision/event sequence per project/environment. Each operation
-  writes the gate first in a snapshot/majority transaction. Conflicting workers
-  retry against fresh state. This prevents write skew in scopes and budgets.
-- `budgets`: rolling send timestamps per project/environment and destination;
-  failed verification timestamps per destination. New challenges do not reset them.
-- `events`: append-only masked lifecycle and delivery records, with a monotonic
-  sequence per project/environment for pagination.
-- `idempotency`: operation/resource-scoped response snapshots retained for at
-  least 24 hours. Only expired snapshots have a TTL index.
-- `outbox`: plaintext simulated codes accessible only to their owner's test key.
-  Entries disappear on terminal transitions and expire through a TTL index.
+Destinations use E.164 (`+` and 8–15 ASCII digits). Purpose is a lowercase identifier
+with optional digits/underscores, up to 64 characters. Projects are created through
+the operator dashboard or CLI. Provider credentials are installation-operator inputs,
+never accepted in application challenge requests.
 
-All challenge lookups include project/environment ownership. API keys never
-authorize legacy operator endpoints. There are no API endpoints for issuing keys,
-mutating projects, editing events, or reading provider credentials.
+Errors have `{error: {code, message, …}}`. Validation errors return 422 with field locations
+without echoing submitted values. A 503 storage error means the operation's result may be
+uncertain; retry create/resend with the same idempotency key. Request bodies are limited to
+64 KiB by default. No CORS policy is provided for putting application keys in public clients.
 
-Transaction callbacks may be retried. Mock preparation is pure and the outbox
-write is transactional. **Do not put a real provider network send in this
-callback.** Later adapters need durable dispatch, provider idempotency, and an
-explicit ambiguous-outcome reconciliation design.
+## Verification lifecycle
 
-## Challenge lifecycle
+A challenge is `pending` until `verified`, `expired`, `locked`, or `superseded`.
+A new create for the same destination/purpose supersedes the previous pending challenge,
+subject to the destination cooldown and send budgets. Resend rotates the code generation,
+resets the challenge's guess counter, and preserves the aggregate destination guess budget.
+The previous code cannot verify the new generation. Attempts across workers and challenges
+remain bounded by shared transaction-protected budgets.
 
-Statuses: `pending`, `verified`, `expired`, `locked`, `superseded`.
+Defaults: expiry 300 s, cooldown 60 s, five attempts/challenge, three resends/challenge,
+five destination sends/hour, ten destination guesses/hour, 1,000 project sends/hour.
+These are scoped by project and environment. A denied send does not consume send budget.
+Use the public configuration variables in [operations](docs/operations.md) to tune them.
 
-There is at most one pending challenge per project/environment/destination/purpose.
-Create during cooldown returns 429. Create after cooldown supersedes an existing
-pending challenge if the send budget allows it. Each terminal transition emits
-exactly one event and cannot be undone by expiry or late delivery results.
+A successful consume returns `verified: true` once. Subsequent consumes return
+`verified: false, reason: already_verified`. HTTP 200 does not by itself grant access.
+Verification is independent of delivery: an accepted message is not evidence that the
+recipient received it, and a delivered message is not evidence that its code was verified.
 
-Default rules:
+## Delivery lifecycle and jobs
 
-| Setting | Default |
-| --- | --- |
-| Expiry | 300 seconds |
-| Create/resend cooldown | 60 seconds |
-| Wrong attempts per challenge | 5 |
-| Resends per challenge | 3 |
-| Sends per destination/environment/project | 5 per rolling hour |
-| Failed verifies per destination/environment/project | 10 per rolling hour |
-| Sends per project/environment | 1,000 per rolling hour |
+Delivery moves through queued → sending → provider_accepted/provider_failed/unknown,
+with `delivered` only from an authenticated provider receipt. Test simulation is explicitly
+marked and cannot claim confirmed delivery. Inline test dispatch remains available for
+embedded tests (`OTPIGEON_DISPATCH_MOCK=false`); Compose uses the durable worker path.
 
-Resend rotates the generation/code, invalidates the previous code, preserves
-attempts, and does not extend the original expiry. A different purpose has its
-own challenge, while destination budgets remain shared. The fifth wrong attempt
-locks the challenge. A spent destination guess budget blocks comparison even
-when the next submitted code is correct.
+Challenge + generation + encrypted delivery payload are inserted in one majority-committed
+MongoDB transaction. Network calls happen after that transaction. A reserved (`leased`)
+job can be reclaimed after its lease expires. A `sending` job is never blindly reclaimed:
+a dead worker or uncertain network result records unknown. Known pre-send connection
+failures and explicit 429 rejections get bounded retries with expiry checks. Server 5xx,
+read/write/network uncertainty, malformed success responses, and dispatch-time crashes
+are unknown, without automatic retry. Redirects and environment HTTP proxies are disabled.
 
-Concurrent correct verifies produce exactly one `verified: true`; later calls
-return `verified: false` with `reason: already_verified`. Your backend must bind
-that one successful result to its pending user and flow before creating a session.
-OTPigeon does not issue application sessions or identify users.
+The worker checks key revocation, current generation, expiry, provider revision, and live
+opt-in immediately before dispatch. Cancellation cannot retract a request already in flight.
+Provider rotations invalidate old queued jobs; immutable encrypted snapshots authenticate
+late receipts for retained jobs. Receipts never consume/reopen verification challenges.
+Receipt replays and backwards status changes do not append duplicate/downgrade events.
 
-All timestamps use UTC with BSON's millisecond precision. Reads enforce expiry;
-challenge records and events are not TTL-deleted. There is no background expiry
-sweeper: an untouched pending record transitions when accessed. Automatic history
-retention is deferred, so operators must account for storage growth.
+## Idempotency and history
 
-## Delivery meaning
+Create/resend require 1–128 ASCII letters, numbers, `._:-`. Keys are project/environment/
+operation/challenge scoped. Matching bodies replay the stored response for 24 hours;
+a different body with the same key returns an idempotency conflict. A replay is the original
+response snapshot; GET the challenge for current state. After 24 hours a key may be reused.
 
-Delivery is separate from verification. Its status is `not_attempted`,
-`provider_accepted`, `provider_failed`, or `unknown`. Every M1 result explicitly
-says `provider: mock`, `environment: test`, and `simulated: true`.
+Event sequences are monotonically increasing within each project/environment, including
+across API/worker replicas. Follow `next_cursor`; sequence gaps after retention are valid.
+Challenge cursors order by creation time and ID. Filters see logically expired challenges.
+Events mask destinations and contain reasons, provider, generation, timestamp, and simulated
+flags. They contain no OTP, provider credentials, or raw provider error bodies.
 
-No endpoint reports `delivered`. Accepted means the simulated provider accepted
-an attempt, not that a real device received it. A known failure has a bounded
-reason; an ambiguous outcome is `unknown` and leaves the challenge verifiable
-until expiry. A resend is possible after cooldown and within budgets.
-
-Fault providers are test-only injections, not configurable runtime modes. The
-internal receipt boundary checks the generation and updates delivery separately
-from verification. It has no HTTP endpoint in M1; real provider webhooks and
-signature verification remain later work.
-
-## API contracts
-
-Authorization: `Authorization: Bearer otpg_test_…` or `otpg_live_…`.
-Create/resend require `Idempotency-Key`: 1–128 ASCII letters, digits, `.`, `_`,
-`:`, or `-`. Use a new key for a new logical operation, and retain it for retries.
-It is scoped to project/environment/operation/resource, including resend's ID.
-The same key/body replays its original HTTP status and response; a changed body
-returns 409. Replays are snapshots: use GET for current state after verification.
-Rate-limit responses are also replayed, so use a new operation key after waiting.
-
-Create body:
-
-```json
-{"destination":"+12025550123","purpose":"login"}
-```
-
-Destination must be E.164-shaped ASCII digits; purpose is a lowercase slug up to
-64 characters. Unexpected fields are rejected. Resend takes `{}`. Verify takes
-exactly a six-digit ASCII string, preserving leading zeroes:
-
-```json
-{"code":"012345"}
-```
-
-Challenge responses include `challenge_id`, `project_id`, `environment`,
-`destination`, `purpose`, `status`, `delivery`, `expires_at`,
-`resend_available_at`, and `attempts_remaining`. Verify additionally includes
-`verified` and `reason`.
-
-Events use `items` and `next_cursor`. Pass that cursor as `after` for the next
-page, and `limit` from 1 to 100. `/v1/events` accepts `challenge_id` and `type`.
-Destinations are masked in events; no codes or API keys are recorded in them.
-Challenge responses reveal the full destination only to its owning key.
-
-Errors have `{"error":{"code":"…","message":"…"}}`. Rate limiting returns
-429 with `error.retry_after` and a `Retry-After` header. Missing/revoked keys
-return 401, foreign or unknown challenges return 404, and live delivery returns
-503. Adapter/database internals are not returned.
-
-## Configuration and operation
-
-`OTPIGEON_SECRET` is a required generated secret of at least 32 characters. Keep
-it separate from API keys and legacy admin tokens. Changing it invalidates pending
-codes; all API workers must use the same secret and limit configuration.
-
-For a native API process, configure `MONGODB_URL` and `MONGODB_DB_NAME` and use
-`backend/.env.example` as a reference. Limit environment names are:
-`OTPIGEON_EXPIRY_SECONDS`, `OTPIGEON_COOLDOWN_SECONDS`, `OTPIGEON_MAX_ATTEMPTS`,
-`OTPIGEON_MAX_RESENDS`, `OTPIGEON_DESTINATION_SENDS_PER_HOUR`,
-`OTPIGEON_DESTINATION_GUESSES_PER_HOUR`, and `OTPIGEON_PROJECT_SENDS_PER_HOUR`.
-Compose uses the documented defaults; customize its `environment` map to override
-limits. Test configuration is injected through the application factory.
-
-`./scripts/dev.sh` initializes an exclusive `.env` and starts Compose. Restarting
-reuses only that Compose project's volume. `docker compose down` stops services
-without deleting the volume. Never remove volumes/databases you did not create.
-The initializer refuses to overwrite existing files and sets mode 0600.
-
-`python -m app.admin` supports `create-project`, `issue-key`, `list-keys`, and
-`revoke-key`. Run it from the backend directory or through `docker compose exec`.
-Only issuance prints a raw key; protect its terminal output. No default API keys
-are installed. A generated Compose project name gives each checkout its own data.
-
-## Legacy PoC quarantine
-
-The previous FastAPI routes are preserved in `app/legacy.py`. They are not mounted
-by default and Compose always sets `OTPIGEON_ENABLE_LEGACY=false`. To deliberately
-operate the PoC outside Compose, set `OTPIGEON_ENABLE_LEGACY=true` and a distinct
-`OTPIGEON_LEGACY_ADMIN_TOKEN` of at least 32 characters. Every legacy route requires
-that token as Bearer authorization. Project keys cannot access it.
-
-The Node sender separately requires a generated `SENDER_API_KEY` of at least
-32 characters, has no public fallback, binds `127.0.0.1` by default, and protects
-`/status`. Set `HOST` explicitly only for a deliberately configured network.
-The backend's `WHATSAPP_SENDER_API_KEY` must match it. Neither service starts or
-links a WhatsApp sender automatically in this milestone.
-
-Legacy code keeps its original global-phone OTP model, races, timeout behavior,
-and console mock output. Those are quarantined rather than upgraded. It is not a
-production path. Existing MongoDB state and `.wwebjs_auth` sessions are preserved;
-the new gateway uses separate collections/database by default and does not migrate
-or delete old records. The unofficial Node dependency tree also has known npm
-audit findings; dependency upgrades and live operation were excluded from M1.
-
-## Validation and roadmap
-
-See [the milestone verification record](docs/verification/m1.md) for reproduced
-failures, replay evidence, and checks actually run. Tests use a real disposable
-replica set for isolation, concurrent workers, idempotency, budgets, and expiry.
-
-Later milestones: operator dashboard, server SDK, official WhatsApp and one SMS
-adapter, receipts/webhooks, retention, and production abuse controls. No real
-message delivery or production readiness is claimed by this milestone.
+The gateway retains full destinations in challenge records and encrypted provider snapshots
+in jobs. Operators should schedule retention cleanup and apply their own privacy policy.
+"Append-only" events describes normal runtime; retention explicitly deletes old history.

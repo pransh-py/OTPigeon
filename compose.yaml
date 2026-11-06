@@ -1,14 +1,37 @@
+# Local installation. MongoDB is on a private network, without authentication.
+# For shared/production hosts use an authenticated external replica set and TLS.
+x-gateway: &gateway
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment: &environment
+    MONGODB_URL: mongodb://mongo:27017/?replicaSet=otpigeon
+    MONGODB_DB_NAME: otpigeon_gateway
+    OTPIGEON_SECRET: ${OTPIGEON_SECRET:?Run scripts/init_local.py first}
+    OTPIGEON_ADMIN_TOKEN: ${OTPIGEON_ADMIN_TOKEN:-}
+    OTPIGEON_PUBLIC_BASE_URL: ${OTPIGEON_PUBLIC_BASE_URL:-http://localhost:8000}
+    OTPIGEON_ALLOW_LIVE_DELIVERY: ${OTPIGEON_ALLOW_LIVE_DELIVERY:-false}
+    OTPIGEON_DISPATCH_MOCK: "true"
+    OTPIGEON_ENABLE_LEGACY: "false"
+  depends_on:
+    mongo-init:
+      condition: service_completed_successfully
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
 services:
   mongo:
     image: mongo:8.2.3
     command: ["mongod", "--replSet", "otpigeon", "--bind_ip_all"]
-    volumes:
-      - gateway-data:/data/db
+    volumes: [gateway-data:/data/db]
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"]
       interval: 2s
       timeout: 5s
       retries: 30
+    restart: unless-stopped
   mongo-init:
     image: mongo:8.2.3
     depends_on:
@@ -27,23 +50,20 @@ services:
         }
         quit(1);
   api:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    environment:
-      MONGODB_URL: mongodb://mongo:27017/?replicaSet=otpigeon
-      MONGODB_DB_NAME: otpigeon_gateway
-      OTPIGEON_SECRET: ${OTPIGEON_SECRET:?Run scripts/init_local.py first}
-      OTPIGEON_ENABLE_LEGACY: "false"
-    ports:
-      - "127.0.0.1:${OTPIGEON_PORT:-8000}:8000"
-    depends_on:
-      mongo-init:
-        condition: service_completed_successfully
+    <<: *gateway
+    ports: ["127.0.0.1:${OTPIGEON_PORT:-8000}:8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 3s
       timeout: 5s
       retries: 30
+  worker:
+    <<: *gateway
+    command: [otpigeon, worker]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,socket; from datetime import datetime,timezone,timedelta; from pymongo import MongoClient; db=MongoClient(os.environ['MONGODB_URL'])[os.environ['MONGODB_DB_NAME']]; assert db.worker_heartbeats.find_one({'hostname':socket.gethostname(),'seen_at': {'$$gt': datetime.now(timezone.utc)-timedelta(seconds=60)}})"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 volumes:
   gateway-data:

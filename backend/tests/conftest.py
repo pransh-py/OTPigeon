@@ -1,13 +1,12 @@
 import os
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import httpx
 import pytest_asyncio
 
-from app.gateway.config import GatewaySettings
-from app.main import create_app
+from otpigeon.gateway.config import GatewaySettings
+from otpigeon.main import create_app
 
 
 class Clock:
@@ -28,7 +27,8 @@ async def gateway():
         raise RuntimeError("Set OTPIGEON_TEST_MONGODB_URL to an isolated replica set")
     clock = Clock()
     config = GatewaySettings(
-        mongodb_url=uri, mongodb_db_name="otpigeon_test_" + uuid4().hex,
+        mongodb_url=uri,
+        mongodb_db_name="otpigeon_test_" + uuid4().hex,
         secret="test-only-" + "x" * 64,
     )
     app = create_app(config, clock=clock)
@@ -38,7 +38,8 @@ async def gateway():
         issued = await service.issue_key(project["project_id"], "test")
         headers = {"Authorization": "Bearer " + issued["api_key"]}
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://gateway",
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://gateway",
             headers=headers,
         ) as http:
             yield app, service, http, clock, project, issued, config
@@ -47,8 +48,11 @@ async def gateway():
 
 
 async def create(http, destination="+12025550123", purpose="login", key=None):
-    return await http.post("/v1/challenges", json={"destination": destination, "purpose": purpose},
-                           headers={"Idempotency-Key": key or uuid4().hex})
+    return await http.post(
+        "/v1/challenges",
+        json={"destination": destination, "purpose": purpose},
+        headers={"Idempotency-Key": key or uuid4().hex},
+    )
 
 
 async def outbox(http, challenge_id):

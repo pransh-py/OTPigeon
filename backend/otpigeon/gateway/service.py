@@ -12,6 +12,8 @@ from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
 
 from .providers import MockDelivery
+from .crypto import Vault
+from .management import ProjectManagement
 
 
 def utcnow():
@@ -33,15 +35,18 @@ def error(code, status=409, retry_after=None):
     return status, body
 
 
-class GatewayService:
+class GatewayService(ProjectManagement):
     def __init__(self, database, config, *, provider=None, clock=utcnow):
         self.db, self.config = database, config
         self.provider = provider or MockDelivery()
+        self.vault = Vault(config.secret)
+
         # BSON dates have millisecond precision; responses and persistence must
         # share that precision, including injected clocks and idempotent replays.
         def database_clock():
             value = clock()
             return value.replace(microsecond=(value.microsecond // 1000) * 1000)
+
         self.clock = database_clock
 
     async def initialize(self):
@@ -53,14 +58,26 @@ class GatewayService:
         await self.db.challenges.create_index([("project_id", 1), ("environment", 1)])
         await self.db.events.create_index([("project_id", 1), ("environment", 1), ("sequence", 1)], unique=True)
         await self.db.idempotency.create_index("expires_at", expireAfterSeconds=0)
-        # Outbox is privileged test data. Never retain raw codes beyond their expiry.
+        # TTL cleanup is eventual; outbox reads independently enforce exact expiry.
         await self.db.outbox.create_index("expires_at", expireAfterSeconds=0)
+        await self.db.jobs.create_index([("state", 1), ("available_at", 1)])
+        await self.db.jobs.create_index([("state", 1), ("lease_until", 1)])
+        await self.db.challenges.create_index([("status", 1), ("expires_at", 1)])
+        await self.db.challenges.create_index([("project_id", 1), ("environment", 1), ("created_at", -1), ("_id", -1)])
+        await self.db.worker_heartbeats.create_index("seen_at", expireAfterSeconds=86400)
+        await self.db.jobs.create_index([("project_id", 1), ("message_id", 1)])
+        await self.db.login_limits.create_index("expires_at", expireAfterSeconds=0)
+        await self.db.operator_sessions.create_index("expires_at", expireAfterSeconds=0)
 
     async def create_project(self, name):
         if not name.strip() or len(name) > 120:
             raise ValueError("Project name must contain 1–120 characters")
-        document = {"_id": uuid4().hex, "name": name.strip(), "created_at": self.clock(),
-                    "environments": {"test": {"provider": "mock"}, "live": {"provider": None}}}
+        document = {
+            "_id": uuid4().hex,
+            "name": name.strip(),
+            "created_at": self.clock(),
+            "environments": {"test": {"provider": "mock"}, "live": {"provider": None}},
+        }
         await self.db.projects.insert_one(document)
         return {"project_id": document["_id"], "name": document["name"]}
 
@@ -70,16 +87,32 @@ class GatewayService:
         if not await self.db.projects.find_one({"_id": project_id}):
             raise ValueError("Project not found")
         key = f"otpg_{environment}_" + secrets.token_urlsafe(32)
-        document = {"_id": uuid4().hex, "digest": digest(key), "prefix": f"otpg_{environment}_",
-                    "project_id": project_id, "environment": environment, "created_at": self.clock(), "revoked_at": None}
+        document = {
+            "_id": uuid4().hex,
+            "digest": digest(key),
+            "prefix": key[:18],
+            "project_id": project_id,
+            "environment": environment,
+            "created_at": self.clock(),
+            "revoked_at": None,
+        }
         await self.db.api_keys.insert_one(document)
         return {"key_id": document["_id"], "api_key": key, "environment": environment}
 
     async def list_keys(self, project_id):
-        documents = await self.db.api_keys.find({"project_id": project_id}, {"digest": 0}).to_list(None)
-        return [{"key_id": d["_id"], "prefix": d["prefix"], "environment": d["environment"],
-                 "created_at": d["created_at"].isoformat(),
-                 "revoked_at": d["revoked_at"].isoformat() if d["revoked_at"] else None} for d in documents]
+        documents = await self.db.api_keys.find(
+            {"project_id": project_id, "internal": {"$ne": True}}, {"digest": 0}
+        ).to_list(None)
+        return [
+            {
+                "key_id": d["_id"],
+                "prefix": d["prefix"],
+                "environment": d["environment"],
+                "created_at": d["created_at"].isoformat(),
+                "revoked_at": d["revoked_at"].isoformat() if d["revoked_at"] else None,
+            }
+            for d in documents
+        ]
 
     async def revoke_key(self, key_id):
         key = await self.db.api_keys.find_one({"_id": key_id})
@@ -87,11 +120,14 @@ class GatewayService:
             return False
         gate_id = identifier(key["project_id"], key["environment"])
         await self._ensure_gate(gate_id)
+
         async def revoke(session):
             await self.db.gates.update_one({"_id": gate_id}, {"$inc": {"revision": 1}}, session=session)
-            result = await self.db.api_keys.update_one({"_id": key_id, "revoked_at": None},
-                                                      {"$set": {"revoked_at": self.clock()}}, session=session)
+            result = await self.db.api_keys.update_one(
+                {"_id": key_id, "revoked_at": None}, {"$set": {"revoked_at": self.clock()}}, session=session
+            )
             return bool(result.matched_count)
+
         return await self._transaction(revoke)
 
     async def authenticate(self, key):
@@ -99,19 +135,23 @@ class GatewayService:
 
     async def _ensure_gate(self, gate_id):
         try:
-            await self.db.gates.update_one({"_id": gate_id}, {"$setOnInsert": {"revision": 0, "event_sequence": 0}}, upsert=True)
+            await self.db.gates.update_one(
+                {"_id": gate_id}, {"$setOnInsert": {"revision": 0, "event_sequence": 0}}, upsert=True
+            )
         except DuplicateKeyError:
             # Concurrent first requests may race to create the same gate.
             pass
 
     async def _transaction(self, callback):
         async with self.db.client.start_session() as session:
-            return await session.with_transaction(callback, read_concern=ReadConcern("snapshot"),
-                                                   write_concern=WriteConcern("majority"))
+            return await session.with_transaction(
+                callback, read_concern=ReadConcern("snapshot"), write_concern=WriteConcern("majority")
+            )
 
     async def execute(self, actor, operation, *, challenge_id=None, body=None, idempotency_key=None):
         gate_id = identifier(actor["project_id"], actor["environment"])
         await self._ensure_gate(gate_id)
+
         async def transact(session):
             # This write makes every operation in one project/environment conflict
             # and retry across processes, preventing write skew in budgets and scopes.
@@ -125,13 +165,19 @@ class GatewayService:
             if idem_id:
                 previous = await self.db.idempotency.find_one({"_id": idem_id}, session=session)
                 if previous and previous["expires_at"] > now:
-                    return (previous["http_status"], previous["response"]) if previous["body_hash"] == body_hash else error("idempotency_conflict")
+                    return (
+                        (previous["http_status"], previous["response"])
+                        if previous["body_hash"] == body_hash
+                        else error("idempotency_conflict")
+                    )
                 if previous:
                     await self.db.idempotency.delete_one({"_id": idem_id}, session=session)
             challenge = None
             if challenge_id:
-                challenge = await self.db.challenges.find_one({"_id": challenge_id, "project_id": actor["project_id"],
-                                                               "environment": actor["environment"]}, session=session)
+                challenge = await self.db.challenges.find_one(
+                    {"_id": challenge_id, "project_id": actor["project_id"], "environment": actor["environment"]},
+                    session=session,
+                )
                 if not challenge:
                     return error("challenge_not_found", 404)
                 await self._expire(actor, challenge, now, session)
@@ -146,15 +192,33 @@ class GatewayService:
             elif operation == "record_delivery":
                 result = await self._record_delivery(actor, challenge, body, now, session)
             elif operation == "outbox":
-                entry = await self.db.outbox.find_one({"_id": challenge_id, "expires_at": {"$gt": now}}, session=session)
-                result = (200, {"challenge_id": challenge_id, "environment": "test", "simulated": True, "code": entry["code"]}) if entry and challenge["status"] == "pending" else error("test_code_unavailable", 404)
+                entry = await self.db.outbox.find_one(
+                    {"_id": challenge_id, "expires_at": {"$gt": now}}, session=session
+                )
+                result = (
+                    (
+                        200,
+                        {"challenge_id": challenge_id, "environment": "test", "simulated": True, "code": entry["code"]},
+                    )
+                    if entry and challenge["status"] == "pending"
+                    else error("test_code_unavailable", 404)
+                )
             else:
                 raise ValueError("Unknown operation")
             if idem_id:
-                await self.db.idempotency.insert_one({"_id": idem_id, "body_hash": body_hash,
-                    "http_status": result[0], "response": result[1], "created_at": now,
-                    "expires_at": now + timedelta(hours=24)}, session=session)
+                await self.db.idempotency.insert_one(
+                    {
+                        "_id": idem_id,
+                        "body_hash": body_hash,
+                        "http_status": result[0],
+                        "response": result[1],
+                        "created_at": now,
+                        "expires_at": now + timedelta(hours=24),
+                    },
+                    session=session,
+                )
             return result
+
         return await self._transaction(transact)
 
     def code_hash(self, challenge, code):
@@ -162,22 +226,48 @@ class GatewayService:
         return hmac.new(self.config.secret.encode(), message.encode(), hashlib.sha256).hexdigest()
 
     def response(self, challenge):
-        return {"challenge_id": challenge["_id"], "project_id": challenge["project_id"],
-                "environment": challenge["environment"], "purpose": challenge["purpose"],
-                "destination": challenge["destination"], "status": challenge["status"], "delivery": challenge["delivery"],
-                "expires_at": challenge["expires_at"].isoformat(),
-                "resend_available_at": challenge["resend_available_at"].isoformat(),
-                "attempts_remaining": max(0, self.config.max_attempts - challenge["attempts"])}
+        return {
+            "challenge_id": challenge["_id"],
+            "project_id": challenge["project_id"],
+            "environment": challenge["environment"],
+            "purpose": challenge["purpose"],
+            "destination": challenge["destination"],
+            "status": challenge["status"],
+            "delivery": challenge["delivery"],
+            "created_at": challenge["created_at"].isoformat(),
+            "expires_at": challenge["expires_at"].isoformat(),
+            "resend_available_at": challenge["resend_available_at"].isoformat(),
+            "attempts_remaining": max(0, self.config.max_attempts - challenge["attempts"]),
+        }
 
     async def _event(self, actor, challenge, kind, reason, now, session, *, destination=None):
-        sequence = await self.db.gates.find_one_and_update({"_id": identifier(actor["project_id"], actor["environment"])},
-                        {"$inc": {"event_sequence": 1}}, return_document=ReturnDocument.AFTER, session=session)
+        sequence = await self.db.gates.find_one_and_update(
+            {"_id": identifier(actor["project_id"], actor["environment"])},
+            {"$inc": {"event_sequence": 1}},
+            return_document=ReturnDocument.AFTER,
+            session=session,
+        )
         destination = destination or (challenge["destination"] if challenge else "")
-        await self.db.events.insert_one({"_id": uuid4().hex, "project_id": actor["project_id"],
-            "environment": actor["environment"], "sequence": sequence["event_sequence"], "timestamp": now,
-            "challenge_id": challenge["_id"] if challenge else None, "type": kind, "reason": reason,
-            "purpose": challenge["purpose"] if challenge else None, "provider": "mock" if actor["environment"] == "test" else None,
-            "simulated": actor["environment"] == "test", "destination": "***" + destination[-4:]}, session=session)
+        await self.db.events.insert_one(
+            {
+                "_id": uuid4().hex,
+                "project_id": actor["project_id"],
+                "environment": actor["environment"],
+                "sequence": sequence["event_sequence"],
+                "timestamp": now,
+                "challenge_id": challenge["_id"] if challenge else None,
+                "generation": challenge.get("generation") if challenge else None,
+                "type": kind,
+                "reason": reason,
+                "purpose": challenge["purpose"] if challenge else None,
+                "provider": challenge.get("delivery", {}).get("provider")
+                if challenge
+                else ("mock" if actor["environment"] == "test" else None),
+                "simulated": actor["environment"] == "test",
+                "destination": "***" + destination[-4:],
+            },
+            session=session,
+        )
 
     async def _terminal(self, actor, challenge, status, now, session):
         if challenge["status"] != "pending":
@@ -186,6 +276,11 @@ class GatewayService:
         challenge["updated_at"] = now
         await self.db.challenges.replace_one({"_id": challenge["_id"]}, challenge, session=session)
         await self.db.outbox.delete_one({"_id": challenge["_id"]}, session=session)
+        await self.db.jobs.update_many(
+            {"challenge_id": challenge["_id"], "state": {"$in": ["queued", "leased"]}},
+            {"$set": {"state": "canceled", "reason": status}, "$unset": {"payload": ""}},
+            session=session,
+        )
         await self._event(actor, challenge, status, status, now, session)
 
     async def _expire(self, actor, challenge, now, session):
@@ -196,7 +291,11 @@ class GatewayService:
         scope = identifier(actor["project_id"], actor["environment"])
         dest_id = identifier(scope, destination)
         project = await self.db.budgets.find_one({"_id": scope}, session=session) or {"_id": scope, "sends": []}
-        dest = await self.db.budgets.find_one({"_id": dest_id}, session=session) or {"_id": dest_id, "sends": [], "guesses": []}
+        dest = await self.db.budgets.find_one({"_id": dest_id}, session=session) or {
+            "_id": dest_id,
+            "sends": [],
+            "guesses": [],
+        }
         cutoff = now - timedelta(hours=1)
         project["sends"] = [t for t in project["sends"] if t > cutoff]
         for field in ("sends", "guesses"):
@@ -205,8 +304,10 @@ class GatewayService:
 
     async def _send_limit(self, actor, destination, challenge, now, session):
         project, dest = await self._budget(actor, destination, now, session)
-        for timestamps, maximum, code in ((dest["sends"], self.config.destination_sends_per_hour, "destination_send_limit"),
-                                         (project["sends"], self.config.project_sends_per_hour, "project_send_limit")):
+        for timestamps, maximum, code in (
+            (dest["sends"], self.config.destination_sends_per_hour, "destination_send_limit"),
+            (project["sends"], self.config.project_sends_per_hour, "project_send_limit"),
+        ):
             if len(timestamps) >= maximum:
                 await self._event(actor, challenge, "rate_limited", code, now, session, destination=destination)
                 return error(code, 429, max(1, math.ceil((min(timestamps) + timedelta(hours=1) - now).total_seconds())))
@@ -217,6 +318,42 @@ class GatewayService:
         return None
 
     async def _deliver(self, actor, challenge, code, now, session):
+        if actor["environment"] == "live" or self.config.dispatch_mock:
+            project = await self.db.projects.find_one({"_id": actor["project_id"]}, session=session)
+            selected = project["environments"][actor["environment"]]
+            config = self.vault.decrypt(selected["sealed"]) if actor["environment"] == "live" else {"provider": "mock"}
+            provider = config["provider"]
+            job_id = identifier(challenge["_id"], challenge["generation"])
+            challenge["delivery"] = {
+                "status": "queued",
+                "provider": provider,
+                "simulated": actor["environment"] == "test",
+                "reason": None,
+            }
+            await self.db.challenges.replace_one({"_id": challenge["_id"]}, challenge, session=session)
+            await self.db.jobs.insert_one(
+                {
+                    "_id": job_id,
+                    "project_id": actor["project_id"],
+                    "environment": actor["environment"],
+                    "key_id": actor["_id"],
+                    "provider": provider,
+                    "provider_revision": selected.get("revision"),
+                    "challenge_id": challenge["_id"],
+                    "generation": challenge["generation"],
+                    "state": "queued",
+                    "attempts": 0,
+                    "created_at": now,
+                    "expires_at": challenge["expires_at"],
+                    "available_at": now,
+                    "provider_snapshot": self.vault.encrypt(config),
+                    "payload": self.vault.encrypt({"code": code}),
+                    "message_id": None,
+                },
+                session=session,
+            )
+            await self._event(actor, challenge, "queued", "delivery_queued", now, session)
+            return
         prepared = self.provider.prepare()
         if prepared.status not in ("provider_accepted", "provider_failed", "unknown"):
             raise ValueError("Invalid delivery outcome")
@@ -226,18 +363,27 @@ class GatewayService:
         challenge["delivery"] = {"status": prepared.status, "provider": "mock", "simulated": True, "reason": reason}
         await self.db.challenges.replace_one({"_id": challenge["_id"]}, challenge, session=session)
         if prepared.status != "provider_failed":
-            await self.db.outbox.replace_one({"_id": challenge["_id"]}, {"_id": challenge["_id"], "code": code,
-                "generation": challenge["generation"], "expires_at": challenge["expires_at"]}, upsert=True, session=session)
+            await self.db.outbox.replace_one(
+                {"_id": challenge["_id"]},
+                {
+                    "_id": challenge["_id"],
+                    "code": code,
+                    "generation": challenge["generation"],
+                    "expires_at": challenge["expires_at"],
+                },
+                upsert=True,
+                session=session,
+            )
         else:
             await self.db.outbox.delete_one({"_id": challenge["_id"]}, session=session)
         kind = "provider_unknown" if prepared.status == "unknown" else prepared.status
         await self._event(actor, challenge, kind, reason, now, session)
 
     async def _create(self, actor, body, now, session):
-        if actor["environment"] != "test":
+        if actor["environment"] == "live" and not self.config.allow_live_delivery:
             return error("live_delivery_disabled", 503)
         project = await self.db.projects.find_one({"_id": actor["project_id"]}, session=session)
-        if project["environments"]["test"]["provider"] != "mock":
+        if not project["environments"][actor["environment"]]["provider"]:
             return error("provider_not_configured", 503)
         scope_id = identifier(actor["project_id"], actor["environment"], body["destination"], body["purpose"])
         previous = await self.db.challenges.find_one({"scope_id": scope_id, "status": "pending"}, session=session)
@@ -251,11 +397,22 @@ class GatewayService:
             return limited
         if previous and previous["status"] == "pending":
             await self._terminal(actor, previous, "superseded", now, session)
-        challenge = {"_id": uuid4().hex, "project_id": actor["project_id"], "environment": actor["environment"],
-            **body, "scope_id": scope_id, "generation": uuid4().hex, "status": "pending", "attempts": 0, "resends": 0,
+        challenge = {
+            "_id": uuid4().hex,
+            "project_id": actor["project_id"],
+            "environment": actor["environment"],
+            **body,
+            "scope_id": scope_id,
+            "generation": uuid4().hex,
+            "status": "pending",
+            "attempts": 0,
+            "resends": 0,
             "expires_at": now + timedelta(seconds=self.config.expiry_seconds),
             "resend_available_at": now + timedelta(seconds=self.config.cooldown_seconds),
-            "created_at": now, "updated_at": now, "delivery": {"status": "not_attempted", "provider": "mock", "simulated": True, "reason": None}}
+            "created_at": now,
+            "updated_at": now,
+            "delivery": {"status": "not_attempted", "provider": "mock", "simulated": True, "reason": None},
+        }
         code = f"{secrets.randbelow(1_000_000):06d}"
         challenge["otp_hash"] = self.code_hash(challenge, code)
         await self.db.challenges.insert_one(challenge, session=session)
@@ -264,7 +421,7 @@ class GatewayService:
         return 201, self.response(challenge)
 
     async def _resend(self, actor, challenge, now, session):
-        if actor["environment"] != "test":
+        if actor["environment"] == "live" and not self.config.allow_live_delivery:
             return error("live_delivery_disabled", 503)
         if challenge["status"] != "pending":
             return error("challenge_" + challenge["status"])
@@ -281,6 +438,11 @@ class GatewayService:
             if not hmac.compare_digest(self.code_hash(challenge, code), challenge["otp_hash"]):
                 break
         challenge["generation"] = uuid4().hex
+        await self.db.jobs.update_many(
+            {"challenge_id": challenge["_id"], "state": {"$in": ["queued", "leased"]}},
+            {"$set": {"state": "canceled", "reason": "superseded_generation"}, "$unset": {"payload": ""}},
+            session=session,
+        )
         challenge["otp_hash"] = self.code_hash(challenge, code)
         challenge["resends"] += 1
         challenge["resend_available_at"] = now + timedelta(seconds=self.config.cooldown_seconds)
@@ -291,11 +453,19 @@ class GatewayService:
 
     async def _verify(self, actor, challenge, code, now, session):
         if challenge["status"] != "pending":
-            return 200, {**self.response(challenge), "verified": False, "reason": "already_verified" if challenge["status"] == "verified" else challenge["status"]}
+            return 200, {
+                **self.response(challenge),
+                "verified": False,
+                "reason": "already_verified" if challenge["status"] == "verified" else challenge["status"],
+            }
         project, dest = await self._budget(actor, challenge["destination"], now, session)
         if len(dest["guesses"]) >= self.config.destination_guesses_per_hour:
             await self._event(actor, challenge, "rate_limited", "destination_verify_limit", now, session)
-            return error("destination_verify_limit", 429, max(1, math.ceil((min(dest["guesses"]) + timedelta(hours=1) - now).total_seconds())))
+            return error(
+                "destination_verify_limit",
+                429,
+                max(1, math.ceil((min(dest["guesses"]) + timedelta(hours=1) - now).total_seconds())),
+            )
         if hmac.compare_digest(self.code_hash(challenge, code), challenge["otp_hash"]):
             await self._terminal(actor, challenge, "verified", now, session)
             return 200, {**self.response(challenge), "verified": True, "reason": "verified"}
@@ -307,7 +477,11 @@ class GatewayService:
             await self._terminal(actor, challenge, "locked", now, session)
         else:
             await self.db.challenges.replace_one({"_id": challenge["_id"]}, challenge, session=session)
-        return 200, {**self.response(challenge), "verified": False, "reason": "locked" if challenge["status"] == "locked" else "invalid_code"}
+        return 200, {
+            **self.response(challenge),
+            "verified": False,
+            "reason": "locked" if challenge["status"] == "locked" else "invalid_code",
+        }
 
     async def _record_delivery(self, actor, challenge, body, now, session):
         """Internal receipt boundary; no HTTP endpoint exposes it in M1."""
@@ -324,7 +498,9 @@ class GatewayService:
         challenge["delivery"]["reason"] = None
         # Use the fresh record inside the serialized transaction. A delayed result
         # updates delivery only, never restores a terminal verification state.
-        await self.db.challenges.update_one({"_id": challenge["_id"]}, {"$set": {"delivery": challenge["delivery"]}}, session=session)
+        await self.db.challenges.update_one(
+            {"_id": challenge["_id"]}, {"$set": {"delivery": challenge["delivery"]}}, session=session
+        )
         await self._event(actor, challenge, "provider_unknown" if status == "unknown" else status, None, now, session)
         return 200, self.response(challenge)
 

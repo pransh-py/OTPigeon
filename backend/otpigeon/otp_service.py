@@ -3,9 +3,9 @@ import hashlib
 import hmac
 import secrets
 
-from app.config import settings
-from app.otp_store import OtpStore
-from app.senders.base import OtpSender
+from otpigeon.config import settings
+from otpigeon.otp_store import OtpStore
+from otpigeon.senders.base import OtpSender
 
 
 # Official docs concept:
@@ -156,9 +156,7 @@ class OtpService:
                 # Return the remaining cooldown as an integer number of seconds.
                 # The API currently returns messages instead of raising HTTP
                 # errors for cooldown cases.
-                remaining_seconds = int(
-                    settings.otp_resend_cooldown_seconds - seconds_since_last_send
-                )
+                remaining_seconds = int(settings.otp_resend_cooldown_seconds - seconds_since_last_send)
 
                 return f"please wait {remaining_seconds} seconds before requesting another otp"
 

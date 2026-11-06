@@ -1,8 +1,8 @@
 import httpx
 
-from app.config import settings
-from app.schemas import SenderStatusResponse
-from app.senders.whatsapp_http_sender import WhatsappSenderError
+from otpigeon.config import settings
+from otpigeon.schemas import SenderStatusResponse
+from otpigeon.senders.whatsapp_http_sender import WhatsappSenderError
 
 
 # FastAPI-side admin adapter for the Node WhatsApp sender service.
@@ -129,8 +129,7 @@ class WhatsappSenderAdmin:
             last_error=data.get("lastError") or data.get("last_error"),
             last_qr_at=data.get("lastQrAt") or data.get("last_qr_at"),
             ready_at=data.get("readyAt") or data.get("ready_at"),
-            disconnected_at=data.get("disconnectedAt")
-            or data.get("disconnected_at"),
+            disconnected_at=data.get("disconnectedAt") or data.get("disconnected_at"),
             message=self._build_message(
                 ready=ready,
                 authenticated=authenticated,

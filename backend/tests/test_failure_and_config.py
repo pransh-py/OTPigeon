@@ -4,8 +4,8 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from app.gateway.providers import DeliveryResult
-from app.main import create_app
+from otpigeon.gateway.providers import DeliveryResult
+from otpigeon.main import create_app
 from conftest import create, outbox
 
 
@@ -48,10 +48,13 @@ async def test_failed_delivery_resend_and_stale_receipt(gateway):
     generation = (await service.db.challenges.find_one({"_id": cid}))["generation"]
     clock.advance(61)
     service.provider = FaultDelivery("unknown")
-    assert (await http.post(f"/v1/challenges/{cid}/resend", json={}, headers={"Idempotency-Key": uuid4().hex})).status_code == 200
+    assert (
+        await http.post(f"/v1/challenges/{cid}/resend", json={}, headers={"Idempotency-Key": uuid4().hex})
+    ).status_code == 200
     owner = await service.authenticate(issued["api_key"])
-    status, body = await service.execute(owner, "record_delivery", challenge_id=cid,
-        body={"generation": generation, "status": "provider_accepted"})
+    status, body = await service.execute(
+        owner, "record_delivery", challenge_id=cid, body={"generation": generation, "status": "provider_accepted"}
+    )
     assert status == 409 and body["error"]["code"] == "stale_delivery_generation"
 
 
@@ -73,10 +76,12 @@ async def test_legacy_opt_in_requires_separate_admin_token(gateway):
 
 
 async def test_opted_in_legacy_routes_reject_project_key(gateway, monkeypatch):
-    from app import legacy
+    from otpigeon import legacy
+
     class EmptyAdmin:
         async def list_senders(self):
             return []
+
     monkeypatch.setattr(legacy, "get_sender_admin", lambda: EmptyAdmin())
     config = replace(gateway[6], enable_legacy=True, legacy_admin_token="admin-test-" + "a" * 64)
     # The boundary is tested without running legacy startup or creating senders.

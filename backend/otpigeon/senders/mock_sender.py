@@ -1,4 +1,4 @@
-from app.senders.base import OtpSender
+from otpigeon.senders.base import OtpSender
 
 
 # Official docs concept:
@@ -42,7 +42,4 @@ class MockOtpSender(OtpSender):
         receiver_phone: str,
         otp: str,
     ) -> None:
-        print(
-            "[MOCK OTP] "
-            f"sender_phone={sender_phone} receiver_phone={receiver_phone} otp={otp}"
-        )
+        print(f"[MOCK OTP] sender_phone={sender_phone} receiver_phone={receiver_phone} otp={otp}")

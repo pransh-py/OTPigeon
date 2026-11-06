@@ -27,3 +27,9 @@ node_modules/
 # Disposable labs, verification media, and local planning evidence
 .local/
 .pytest_cache/
+
+# Release build outputs
+dist/
+*.egg-info/
+.ruff_cache/
+*.tgz
