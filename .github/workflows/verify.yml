@@ -31,6 +31,8 @@ jobs:
           node scripts/check-messaging-package.mjs
       - uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
+          if-no-files-found: error
           name: messaging-node-${{ matrix.node }}
           path: .local/otpigeon-*.tgz
   contracts:
@@ -86,6 +88,8 @@ jobs:
         run: npm audit --prefix whatsapp-sender --json > .local/experimental-audit.json || test -s .local/experimental-audit.json
       - uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
+          if-no-files-found: error
           name: packages-python-${{ matrix.python }}
           path: |
             dist/*
@@ -120,6 +124,8 @@ jobs:
           docker run --rm -v "$PWD/.local:/scan" aquasec/trivy:latest image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --input /scan/gateway.tar --format json --output /scan/container-vulns.json
       - uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
+          if-no-files-found: error
           name: container-audit
           path: .local/container-vulns.json
       - name: Clean this job's state

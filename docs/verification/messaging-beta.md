@@ -79,6 +79,15 @@ asserts both the error and the absence of the leaked lock. Actual captures:
 `startup-before.json/png` and `startup-after.json/png` in the same ignored evidence folder.
 The pair is also posted in the chat and PR evidence comment.
 
+## CI artifact availability
+
+The first green CI run exposed an upload warning: wildcard tarballs under `.local`
+were excluded as hidden files. The upload steps now explicitly include hidden files
+within their narrow artifact paths and fail if no files exist. These paths whitelist
+only built archives and audit JSON, not environments, database files or browser sessions.
+The original warning is captured in `ci-artifact-before.log`; final artifact availability
+and clean installation from the downloaded archive are checked after the corrected run.
+
 ## Coverage and release gaps
 
 No real QR account linking, saved-login restore against WhatsApp, live text/media delivery,
