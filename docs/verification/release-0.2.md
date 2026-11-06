@@ -4,7 +4,7 @@ Date: November 6, 2026. Baseline: `f54bd5af66aa2bc100c8112d714afd67ad566473`.
 The exact delivered revision is the head of PR #1; its final review comment records that SHA.
 
 Reviewed code/config/test source fingerprint (62 files, paths and content, SHA-256):
-`e2bfbc5f23aad4dd80b8757c0a9f80bf6c552c42070d99dd744966daf267c803`.
+`c1d949dcb198c00eb1cb58c12e5bbb1c2c1029a95896e3123f55616e4dd41745`.
 This excludes prose verification documents so the fingerprint can be recorded without recursion.
 The ignored `fingerprints.json` records the file list and built artifact hashes. Installed wheel
 contents were compared byte-for-byte with current package sources, with no differences.
@@ -28,7 +28,7 @@ Existing environments, MongoDB data directories, and WhatsApp authentication wer
 
 | Check | Result |
 | --- | --- |
-| Backend contracts | 47 passed in the consolidated run; six process/revocation/rotation/retention checks passed after adding the extra provider-rotation case (48 distinct final backend cases) |
+| Backend contracts | 48 passed on both Python 3.12 and 3.13 in GitHub CI; local consolidated and focused process/rotation checks also passed |
 | SDK contracts | 4 passed; scope, idempotency, typed errors, network uncertainty, no automatic retries |
 | Experimental sender regression | 1 passed without loading a WhatsApp session |
 | Ruff lint / format | Passed |
@@ -53,6 +53,11 @@ Existing environments, MongoDB data directories, and WhatsApp authentication wer
 CI additionally runs the final suite on Python 3.12 and 3.13, Node 22, an AMD64 container
 installation, full container smoke flow, and image vulnerability scan. Its actual result is
 reported on the exact PR head; local checks alone are not represented as remote CI proof.
+
+The first exact-head CI run passed both complete Python jobs and container setup/smoke.
+Its scan export command rejected a bare 64-character Docker image ID. The workflow now
+resolves the running container’s fully qualified Image reference before export; the same
+export was replayed locally and actionlint passed. Final CI is rerun on the corrected revision.
 
 ## Actual before/after fixes
 

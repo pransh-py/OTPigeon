@@ -89,7 +89,7 @@ jobs:
       - name: Scan release image OS and Python dependencies
         run: |
           mkdir -p .local
-          docker save "$(docker compose images -q api)" -o .local/gateway.tar
+          docker save "$(docker inspect --format '{{.Image}}' "$(docker compose ps -q api)")" -o .local/gateway.tar
           docker run --rm -v "$PWD/.local:/scan" aquasec/trivy:latest image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --input /scan/gateway.tar --format json --output /scan/container-vulns.json
       - uses: actions/upload-artifact@v4
         with:
