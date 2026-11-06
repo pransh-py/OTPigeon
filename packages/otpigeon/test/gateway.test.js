@@ -480,3 +480,26 @@ test("gateway shutdown surfaces browser cleanup failure after stopping durable w
   const reopened = await GatewayStore.open(filename, secret);
   reopened.close();
 });
+
+test("invalid startup configuration fails before acquiring durable storage ownership", async (t) => {
+  const path = await mkdtemp(join(tmpdir(), "otpigeon-invalid-start-"));
+  t.after(() => rm(path, { recursive: true, force: true }));
+  const filename = join(path, "gateway.sqlite");
+  await assert.rejects(
+    createGateway({
+      databasePath: filename,
+      storageSecret: secret,
+      projects: [
+        {
+          id: "shop",
+          environment: "live",
+          keyHashes: [hashApiKey("otpg_live_" + "a".repeat(43))],
+          client: {},
+        },
+      ],
+    }),
+    { code: "INVALID_ARGUMENT" },
+  );
+  const store = await GatewayStore.open(filename, secret);
+  store.close();
+});

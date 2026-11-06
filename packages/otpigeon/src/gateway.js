@@ -78,6 +78,17 @@ export async function createGateway({
       !validId(config.id) ||
       !["test", "live"].includes(config.environment) ||
       !config.client ||
+      !config.client.transport ||
+      [
+        "on",
+        "off",
+        "status",
+        "close",
+        "sendText",
+        "sendImage",
+        "sendDocument",
+        "replyText",
+      ].some((method) => typeof config.client[method] !== "function") ||
       !Array.isArray(config.keyHashes) ||
       !config.keyHashes.length
     )

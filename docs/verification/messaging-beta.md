@@ -25,7 +25,7 @@ would change that hash. Review is by the active implementation session, not inde
 
 ## Checks and evidence
 
-- 29 messaging contract tests passed on Node 22.16.0 and Node 24.22.2 (also local 26.5.0).
+- 30 messaging contract tests passed on Node 22.16.0 and Node 24.22.2 (also local 26.5.0).
 - Source TypeScript consumer and formatting checks passed. Fresh tarball consumers
   checked exports, types, HTTP -> encrypted job -> mock dispatch -> accepted and all
   three examples, with no engine installed and no external services. Measured clean
@@ -67,6 +67,17 @@ The complete messaging contracts still pass.
 Actual operation captures (no fabricated baseline or passing-test replacement):
 `.local/evidence/messaging-beta/before.json`, `before.png`, `after.json`, `after.png`.
 Binary images remain ignored; the pair is posted in the chat and authorized PR evidence.
+
+## Invalid startup configuration reproduction
+
+An additional final probe passed an invalid live client object to `createGateway`
+with disposable storage. It threw a raw TypeError after opening SQLite; an immediate
+attempt to reopen the same database failed with SESSION_LOCKED. Client capability
+validation now runs before storage acquisition. The same trigger returns structured
+INVALID_ARGUMENT and immediate ownership acquisition succeeds. A regression test
+asserts both the error and the absence of the leaked lock. Actual captures:
+`startup-before.json/png` and `startup-after.json/png` in the same ignored evidence folder.
+The pair is also posted in the chat and PR evidence comment.
 
 ## Coverage and release gaps
 
