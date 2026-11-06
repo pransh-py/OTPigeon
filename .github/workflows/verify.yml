@@ -1,4 +1,4 @@
-name: Verify gateway
+name: Verify packages and gateway
 on:
   pull_request:
   push:
@@ -6,6 +6,33 @@ on:
 permissions:
   contents: read
 jobs:
+  messaging:
+    strategy:
+      matrix:
+        node: ['22.16.0', '24']
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Messaging contracts, types, formatting and package audit
+        run: |
+          npm ci --ignore-scripts --prefix packages/otpigeon
+          npm run format:check --prefix packages/otpigeon
+          npm run typecheck --prefix packages/otpigeon
+          npm test --prefix packages/otpigeon
+          npm audit --prefix packages/otpigeon
+      - name: Clean tarball installation and complete mock examples
+        run: |
+          mkdir -p .local
+          npm pack ./packages/otpigeon --pack-destination .local
+          node scripts/check-messaging-package.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: messaging-node-${{ matrix.node }}
+          path: .local/otpigeon-*.tgz
   contracts:
     strategy:
       matrix:

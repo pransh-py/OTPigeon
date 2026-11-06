@@ -5,6 +5,22 @@
 when available. If private reporting is unavailable, open an issue asking for a private
 contact without including exploit details, credentials, OTPs, or real-user data.
 
+The new `otpigeon` 0.3.0-beta.1 npm package is a source-only messaging beta. Its
+core/mock/gateway distribution has no mandatory runtime npm dependencies. The optional
+`whatsapp-web.js@1.34.7` browser engine carries the same upstream dependency advisory
+boundary as the original sender below; optional peer packaging does not resolve those
+advisories when the engine is installed. Treat real-account transport as experimental.
+It is unofficial and can break or cause account blocking. Do not advertise Meta endorsement.
+
+The embedded client uses private local session files and an OS-backed exclusive lock.
+The optional Node gateway uses AES-256-GCM for pending payloads/events, stores hashed
+project keys, and rechecks external revocation when configured. Protect the volume and
+storage secret; no automatic rotation/migration is provided. Unknown sends are never
+blindly retried. Local SQLite ownership is not a multi-host lease. HTTP is loopback by
+default; deploy shared use behind authenticated network/TLS controls. Configured webhook
+destinations are trusted operator input. See docs/messaging-gateway.md for limits.
+The memory-only OTP helper is for a single process; hosts own flow binding and rate limits.
+
 Supported scope: installable Python gateway, bundled operator dashboard, server SDK,
 and default/ distributed gateway container recipes. The operator dashboard is installation
 administration; it provides no organization/RBAC separation. Never give an application

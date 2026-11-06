@@ -1,19 +1,34 @@
 # OTPigeon
 
-A self-hostable verification gateway for small app teams. Connect a project's messaging provider, request a phone verification through one API, and follow its delivery and verification history.
+An open-source WhatsApp messaging toolkit for developers. The main product is the
+embedded **`otpigeon` npm package**: connect an account, send text/images/documents,
+receive messages and reply. Basic embedded usage needs no Python service or MongoDB.
 
-**0.2.0rc1 — open-source release candidate.** Python server + bundled operator dashboard + server-side JavaScript SDK. MIT licensed. Registry packages and hosted services have not been published.
+**0.3.0-beta.1 is source-only and has not been published to npm.**
+QR automation is unofficial and uses an optional browser engine with known upstream
+advisories. Real-account linking/delivery has not been exercised in the lab.
+See [package documentation](packages/otpigeon/README.md) and [security policy](SECURITY.md).
 
-- Projects own their test/live keys and live provider configuration.
-- Phone inputs use international format with an explicit country calling code; there is no India default.
-- Six-digit, single-use challenges are scoped to project, environment, destination, and purpose.
-- Mock delivery for development; official Meta WhatsApp Cloud API and Twilio SMS adapters for live delivery.
-- Transactional jobs, competing workers, lease recovery, bounded retries, signed delivery receipts, and masked event history.
-- A dashboard for keys, providers, test flows, metrics, and challenge timelines.
+```sh
+npm ci --prefix packages/otpigeon
+node packages/otpigeon/examples/order-notification.js
+node packages/otpigeon/examples/incoming-bot.js
+node packages/otpigeon/examples/otp-verification.js
+# Each example defaults to mock; no account or external message is involved.
+npm pack ./packages/otpigeon --pack-destination .local
+```
 
-Your application owns its users and sessions. A successful verification does not create an application account or log a user in automatically.
+The package includes explicit connection state, saved local sessions, exclusive session
+ownership, bounded queues, conservative unknown-send handling and TypeScript declarations.
+An [optional Node HTTP gateway](docs/messaging-gateway.md) adds encrypted durable jobs,
+project keys, event polling and signed webhooks over the same client.
 
-## Run locally
+The existing **0.2.0rc1 Python verification gateway** remains available with its operator
+dashboard and separate `otpigeon-sdk`. It supports project-scoped single-use challenges,
+transactional dispatch, official Meta authentication templates and optional Twilio SMS.
+Applications own their users, recipient consent and application sessions.
+
+## Run the verification gateway locally
 
 Requires Docker with Compose v2.24.4+ and Python 3.12+ for the environment generator.
 

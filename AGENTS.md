@@ -14,10 +14,11 @@ switch without a supported control or verification.
 
 ## Scope and delivery
 
-Read the current request and relevant code before acting. Keep the accepted
-product direction: a self-hostable verification gateway for small app teams,
-with project-owned provider configuration and observable verification flows.
-Applications integrating it own their accounts and sessions.
+Read the current request and relevant code before acting. The primary product
+is an embedded npm WhatsApp messaging toolkit, with an optional self-hosted
+gateway and verification helpers. Preserve the existing Python verification
+gateway and its project-owned configuration. Applications integrating either
+product own their accounts, recipient consent, and application sessions.
 
 Use meaningful, minimal test-first verification for substantive changes.
 Inspect the actual diff, affected critical paths, test results, and relevant

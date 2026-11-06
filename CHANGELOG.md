@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0-beta.1 — messaging npm package (source beta)
+
+- Main `otpigeon` package: embedded text/images/documents, incoming direct messages and
+  replies, TypeScript declarations, explicit lifecycle and an optional unofficial engine.
+- Persistent local session configuration, exclusive ownership, bounded reconnect/queues,
+  conservative unknown outcomes and no automatic resend after ambiguous dispatch.
+- Optional Node HTTP gateway with encrypted SQLite jobs/events, scoped project keys,
+  revocation integration, idempotency, restart recovery and signed durable webhooks.
+- Optional memory-only verification helper and executable mock-first examples.
+- Existing Python verification gateway and `otpigeon-sdk` APIs are preserved.
+- No registry publication or live-account acceptance claim; see docs/beta-program.md.
+
+
 ## 0.2.0rc1 — 2026-11-06
 
 - Installable Python server and CLI with bundled operator dashboard.

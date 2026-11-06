@@ -27,3 +27,27 @@ Rollback: preserve the database and matching root secret, stop live workers, and
 previous tested application image/revision. Never reset dispatched/unknown jobs to queued.
 The M1 application cannot operate the new live-provider queue; disable live traffic during
 such a rollback. Keep backups until the migration and controlled delivery have been verified.
+
+## Primary npm messaging beta
+
+The main product is now `otpigeon@0.3.0-beta.1`, independently versioned from the
+preserved Python gateway and verification SDK. The npm name was available when checked;
+registry ownership/authentication and final availability must still be confirmed at release.
+
+1. Run `npm ci --prefix packages/otpigeon`, formatting, TypeScript consumer checks and
+   messaging tests on Node 22.16+ and 24. Inspect `docs/verification/messaging-beta.md`.
+2. Run `npm pack ./packages/otpigeon --pack-destination .local` and
+   `node scripts/check-messaging-package.mjs`. This installs the actual tarball in a clean
+   directory, checks exports/types and executes the order/bot/OTP examples plus HTTP flow.
+3. Audit the core distribution and the separately installed optional engine. The core has
+   no mandatory runtime dependencies; this does not clear advisories in `whatsapp-web.js`.
+   Review the explicit unofficial/experimental transport description before publication.
+4. Complete the separately authorized real-account acceptance checklist and collect five
+   external developer results using `docs/beta-program.md`. Local mock runs do not count.
+5. With publication authorization and a confirmed npm owner, publish the reviewed tarball
+   under the `beta` tag, tied to its recorded revision and checksum. Keep the stable/default
+   tag unchanged until acceptance warrants it. No PR job publishes packages automatically.
+
+Rollback: install the previous reviewed tarball, preserve session/database files and the
+matching storage secret. Do not requeue unknown messages or share the browser profile with
+another owner. A Node messaging beta rollback does not require changing Python collections.
