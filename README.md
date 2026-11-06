@@ -5,6 +5,7 @@ A self-hostable verification gateway for small app teams. Connect a project's me
 **0.2.0rc1 — open-source release candidate.** Python server + bundled operator dashboard + server-side JavaScript SDK. MIT licensed. Registry packages and hosted services have not been published.
 
 - Projects own their test/live keys and live provider configuration.
+- Phone inputs use international format with an explicit country calling code; there is no India default.
 - Six-digit, single-use challenges are scoped to project, environment, destination, and purpose.
 - Mock delivery for development; official Meta WhatsApp Cloud API and Twilio SMS adapters for live delivery.
 - Transactional jobs, competing workers, lease recovery, bounded retries, signed delivery receipts, and masked event history.

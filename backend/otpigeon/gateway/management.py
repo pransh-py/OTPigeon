@@ -3,13 +3,15 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Literal
 
+from otpigeon.phone import E164_PHONE_PATTERN
+
 
 class TwilioSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: Literal["twilio_sms"]
     account_sid: str = Field(pattern=r"^AC[0-9a-fA-F]{32}$")
     auth_token: str = Field(min_length=16, max_length=256)
-    from_number: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$")
+    from_number: str = Field(pattern=E164_PHONE_PATTERN)
 
 
 class MetaSettings(BaseModel):

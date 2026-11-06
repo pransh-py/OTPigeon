@@ -22,3 +22,12 @@ test('rejects non-origin URLs, invalid timeouts, and invalid idempotency keys', 
  assert.throws(() => new OTPigeon({...options, timeoutMs: -1}));
  await assert.rejects(new OTPigeon(options).create({}, {idempotencyKey: 'bad\nkey'}), TypeError);
 });
+
+test('preserves international numbers, including significant zeros and short plans', async () => {
+ const {readFileSync} = await import('node:fs');
+ const cases = JSON.parse(readFileSync(new URL('../../tests/fixtures/phone-numbers.json', import.meta.url), 'utf8'));
+ const seen = [];
+ const sdk = new OTPigeon({...options, fetch: async (_url, init) => { seen.push(JSON.parse(init.body).destination); return Response.json({}); }});
+ for (const {number} of cases.accepted) await sdk.create({destination: number, purpose: 'signup'});
+ assert.deepEqual(seen, cases.accepted.map(c => c.number));
+});

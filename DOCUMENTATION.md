@@ -25,8 +25,10 @@ It is an installation administrator, not a multi-user organization/RBAC system.
 | GET | `/v1/test/outbox?challenge_id=…` | Test key only; pending, unexpired simulated code |
 | GET | `/health` | Database connectivity/readiness and live-delivery mode |
 
-Destinations use E.164 (`+` and 8–15 ASCII digits). Purpose is a lowercase identifier
-with optional digits/underscores, up to 64 characters. Projects are created through
+Destinations use E.164 (`+` and 2–15 ASCII digits). Purpose is a lowercase identifier
+with optional digits/underscores, up to 64 characters. The calling code is supplied by the
+caller; no country is inferred or prefixed. This is canonical syntax validation, not proof of
+assignment, reachability, or a valid national numbering plan. Projects are created through
 the operator dashboard or CLI. Provider credentials are installation-operator inputs,
 never accepted in application challenge requests.
 

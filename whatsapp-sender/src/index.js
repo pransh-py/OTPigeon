@@ -193,7 +193,7 @@ function readSenderId(body) {
   const senderId = body?.sender_id || body?.senderId;
 
   if (senderId !== undefined) {
-    if (typeof senderId !== 'string' || !/^[1-9]\d{7,14}$/.test(senderId)) {
+    if (typeof senderId !== 'string' || !isValidE164Phone('+' + senderId)) {
       const error = new Error(
         'senderId must be digits only, such as 919876543210.'
       );
@@ -489,7 +489,7 @@ app.post('/send-otp', requireSenderApiKey, async (req, res) => {
     return res.status(400).json({
       error: 'invalid_receiver_phone',
       message:
-        'receiver phone must be an E.164-style string such as +919876543210.',
+        'receiver phone must include its country calling code, such as +12025550123 or +447700900123.',
     });
   }
 

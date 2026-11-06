@@ -114,7 +114,7 @@ function normalizeSenderPhone(senderPhone) {
   if (!isValidE164Phone(senderPhone)) {
     throw createCodedError(
       'INVALID_SENDER_PHONE',
-      'senderPhone must be an E.164-style string such as +919876543210.'
+      'senderPhone must include its country calling code, such as +12025550123 or +447700900123.'
     );
   }
 
@@ -317,7 +317,7 @@ function attachClientEvents(senderSession) {
 // This is the central entry point for registering a WhatsApp sender.
 //
 // Flow:
-// 1. Normalize +91... into digits-only senderId.
+// 1. Remove the leading + from the full international number to form senderId.
 // 2. If already registered in memory, return existing status.
 // 3. Create per-sender lifecycle state.
 // 4. Create one whatsapp-web.js Client for that sender.

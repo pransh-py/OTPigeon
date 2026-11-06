@@ -3,13 +3,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from otpigeon.phone import E164_PHONE_PATTERN
+
 
 class StrictBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class CreateChallenge(StrictBody):
-    destination: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$")
+    destination: str = Field(pattern=E164_PHONE_PATTERN)
     purpose: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
 
 

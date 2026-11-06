@@ -15,22 +15,24 @@
 //
 // E.164 numbers usually look like:
 //   +919876543210
-//   +14155552671
+//   +12025550123
+//   +447700900123
+//   +6834002 (short national number)
 //
 // Rule breakdown:
 //   ^       start of string
 //   \+      literal plus sign; we require callers to send international format
 //   [1-9]   first country-code digit cannot be 0
-//   \d{7,14}
-//           remaining digits; total length becomes 8 to 15 digits after "+"
+//   [0-9]{1,14}
+//           remaining digits; total length becomes 2 to 15 digits after "+"
 //   $       end of string
 //
 // Why this is intentionally simple:
 // Real phone-number validation is country-specific and more complex. For this
-// POC, we only need to reject clearly invalid inputs before calling
+// boundary, we reject noncanonical inputs before calling
 // whatsapp-web.js. WhatsApp itself will still tell us whether the number is
 // actually registered through client.getNumberId(...).
-const E164_PHONE_PATTERN = /^\+[1-9]\d{7,14}$/;
+const E164_PHONE_PATTERN = /^\+[1-9][0-9]{1,14}$/;
 
 // Validate the public API phone input.
 //
@@ -42,7 +44,8 @@ const E164_PHONE_PATTERN = /^\+[1-9]\d{7,14}$/;
 // For example, leading zeros can matter in some national formats, and very long
 // numbers should not be treated as numeric data.
 function isValidE164Phone(phone) {
-  return typeof phone === 'string' && E164_PHONE_PATTERN.test(phone);
+  // JavaScript's $ can match before a final newline; require canonical whitespace too.
+  return typeof phone === 'string' && phone === phone.trim() && E164_PHONE_PATTERN.test(phone);
 }
 
 // Convert a public API phone number into the format whatsapp-web.js expects for

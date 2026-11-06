@@ -10,6 +10,7 @@
 - Dependency-free JavaScript SDK with TypeScript declarations and complete test-flow examples.
 - Local two-API/two-worker topology, retention maintenance and operational/release guides.
 - Validation responses no longer echo submitted codes; server dependencies refreshed.
+- International phone formatting now accepts shorter numbering plans, preserves country codes/significant zeros, and uses shared cross-language regression fixtures.
 - Python import path changed from `app` to `otpigeon`; public v1 API retained.
 
 ## 0.1.0 — M1

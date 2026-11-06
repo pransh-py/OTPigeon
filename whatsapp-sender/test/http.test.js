@@ -40,6 +40,23 @@ test('sender refuses public defaults and protects status without loading a Whats
       const body = await status.json();
       assert.equal(body.loadedSenderCount, 0);
       assert.deepEqual(body.senders, []);
+      const cases = require('../../tests/fixtures/phone-numbers.json');
+      const headers = { 'X-SENDER-API-KEY': key, 'Content-Type': 'application/json' };
+      for (const {number} of cases.accepted) {
+        const response = await fetch(`${base}/senders/normalize`, {method: 'POST', headers, body: JSON.stringify({sender_phone: number})});
+        assert.equal(response.status, 200);
+        assert.equal((await response.json()).senderId, number.slice(1));
+      }
+      for (const number of cases.rejected) {
+        const response = await fetch(`${base}/senders/normalize`, {method: 'POST', headers, body: JSON.stringify({sender_phone: number})});
+        assert.equal(response.status, 400);
+      }
+      // A short sender ID passes syntax validation and reaches the missing-session
+      // check. No WhatsApp account is created, linked, or contacted.
+      const missingSender = await fetch(`${base}/send-otp`, {method: 'POST', headers,
+        body: JSON.stringify({sender_id: '6834002', phone: '+6834002', otp: '123456'})});
+      assert.equal(missingSender.status, 404);
+      assert.equal((await missingSender.json()).error, 'sender_not_found');
     } finally {
       child.kill('SIGTERM');
       await once(child, 'exit');

@@ -1,0 +1,16 @@
+{
+  "note": "Formatting fixtures only; not proof of assignment, WhatsApp registration, or delivery. No messages are sent.",
+  "accepted": [
+    {"label": "India", "number": "+919876543210"},
+    {"label": "United States", "number": "+12025550123"},
+    {"label": "United Kingdom", "number": "+447700900123"},
+    {"label": "Germany", "number": "+4930123456"},
+    {"label": "United Arab Emirates", "number": "+971501234567"},
+    {"label": "Australia", "number": "+61412345678"},
+    {"label": "Italy (significant zero preserved)", "number": "+390212345678"},
+    {"label": "Niue (short national number)", "number": "+6834002"},
+    {"label": "Maximum shape: 15 digits", "number": "+123456789012345"},
+    {"label": "Minimum shape only; not a national-plan check", "number": "+12"}
+  ],
+  "rejected": [null, 12025550123, "", "+", "+1", "9876543210", "00447700900123", "+012345678", "+1234567890123456", " +12025550123", "+1 2025550123", "+1-202-555-0123", "+12025550123\n", "+12025550123\r", "+12025550123\u2028", "+12025550123\u2029", "+١٢٠٢٥٥٥٠١٢٣", "+１２０２５５５０１２３", "+12025550123@c.us"]
+}

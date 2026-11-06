@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from otpigeon.phone import E164_PHONE_PATTERN
+
 
 # Official docs concept:
 # FastAPI uses Pydantic models to declare request bodies. Its docs say that when
@@ -41,7 +43,6 @@ from pydantic import BaseModel, Field
 # The WhatsApp sender expects international phone numbers like +919876543210.
 # Validating that format in FastAPI prevents bad values such as 9840650578 from
 # reaching the Node service and turning into a downstream 500.
-E164_PHONE_PATTERN = r"^\+[1-9]\d{7,14}$"
 
 # Six-digit OTP format shared by request verification and the sender service.
 #
@@ -93,7 +94,7 @@ class OtpRequest(BaseModel):
     sender_phone: str = Field(
         ...,
         pattern=E164_PHONE_PATTERN,
-        examples=["+918637427358"],
+        examples=["+12025550100"],
     )
     phone: str = Field(
         ...,
@@ -121,7 +122,7 @@ class SetSenderRequest(BaseModel):
     sender_phone: str = Field(
         ...,
         pattern=E164_PHONE_PATTERN,
-        examples=["+918637427358"],
+        examples=["+12025550100"],
     )
 
 
