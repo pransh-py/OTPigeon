@@ -85,7 +85,11 @@ const app = express();
 // This is not production-grade auth. It is enough for a local POC so that random
 // local requests cannot trigger messages unless they know the shared key.
 const port = Number(process.env.PORT || 3001);
-const senderApiKey = process.env.SENDER_API_KEY || 'local-dev-key';
+const host = process.env.HOST || '127.0.0.1';
+const senderApiKey = process.env.SENDER_API_KEY;
+if (!senderApiKey || senderApiKey.length < 32 || /^(change|replace|placeholder)/i.test(senderApiKey)) {
+  throw new Error('SENDER_API_KEY must be a generated secret of at least 32 characters.');
+}
 
 // Register JSON body parsing middleware.
 //
@@ -117,7 +121,7 @@ app.get('/health', (req, res) => {
 // - after scan, authenticated should become true
 // - when fully usable, ready should become true
 // - if session fails, lastError should show the reason
-app.get('/status', (req, res) => {
+app.get('/status', requireSenderApiKey, (req, res) => {
   res.json(getManagerStatus());
 });
 
@@ -189,7 +193,7 @@ function readSenderId(body) {
   const senderId = body?.sender_id || body?.senderId;
 
   if (senderId !== undefined) {
-    if (typeof senderId !== 'string' || !/^[1-9]\d{7,14}$/.test(senderId)) {
+    if (typeof senderId !== 'string' || !isValidE164Phone('+' + senderId)) {
       const error = new Error(
         'senderId must be digits only, such as 919876543210.'
       );
@@ -485,7 +489,7 @@ app.post('/send-otp', requireSenderApiKey, async (req, res) => {
     return res.status(400).json({
       error: 'invalid_receiver_phone',
       message:
-        'receiver phone must be an E.164-style string such as +919876543210.',
+        'receiver phone must include its country calling code, such as +12025550123 or +447700900123.',
     });
   }
 
@@ -526,6 +530,6 @@ app.post('/send-otp', requireSenderApiKey, async (req, res) => {
 // During startup, WhatsApp login may take time or wait for QR scan. Starting the
 // HTTP server immediately lets us call /health and /status while auth is in
 // progress.
-app.listen(port, () => {
+app.listen(port, host, () => {
   console.log(`WhatsApp sender service listening on port ${port}.`);
 });

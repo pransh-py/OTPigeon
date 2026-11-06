@@ -1,205 +1,141 @@
-# WhatsApp OTP POC
+# OTPigeon
 
-Separate proof-of-concept for OTP login using Flutter, FastAPI, MongoDB, and a swappable OTP delivery layer.
+An open-source WhatsApp messaging toolkit for developers. The main product is the
+embedded **`otpigeon` npm package**: connect an account, send text/images/documents,
+receive messages and reply. Basic embedded usage needs no Python service or MongoDB.
 
+**0.3.0-beta.1 is source-only and has not been published to npm.**
+QR automation is unofficial and uses an optional browser engine with known upstream
+advisories. Real-account linking/delivery has not been exercised in the lab.
+See [package documentation](packages/otpigeon/README.md) and [security policy](SECURITY.md).
 
-## Current Status
-
-Completed:
-
-- FastAPI backend scaffold.
-- Pydantic schemas for health, sender management, OTP request/resend, and OTP verification.
-- Working routes:
-  - `GET /health`
-  - `POST /set-sender`
-  - `GET /senders`
-  - `GET /senders/{sender_id}/status`
-  - `GET /senders/{sender_id}/qr`
-  - `POST /senders/{sender_id}/logout`
-  - `POST /otp/request`
-  - `POST /otp/resend`
-  - `POST /otp/verify`
-- Environment-based backend config.
-- MongoDB connection helper.
-- MongoDB OTP store layer with index setup and OTP record methods.
-- FastAPI startup wiring for MongoDB OTP indexes.
-- Sender abstraction with a mock console OTP sender.
-- OTP service with:
-  - 6-digit OTP generation using Python `secrets`
-  - salted SHA-256 OTP hashing
-  - MongoDB OTP storage
-  - OTP expiry handling
-  - resend cooldown handling
-  - max verification attempt handling
-  - secure hash comparison
-  - failed attempt tracking
-  - one-time OTP deletion after successful verification
-- API routes connected to the OTP service.
-- Local backend validation with MongoDB and Swagger/manual API calls.
-- Separate Node.js WhatsApp sender service using whatsapp-web.js.
-- Multi-session WhatsApp sender management:
-  - one sender session per sender phone number
-  - sender-specific QR login and LocalAuth persistence
-  - sender status, QR lookup, list, logout, and selected-sender OTP delivery
-- FastAPI WhatsApp sender adapter and admin proxy routes.
-- Git ignore rules for secrets, virtualenv, build artifacts, and WhatsApp session files.
-
-Current priority:
-
-- Manually validate the full FastAPI-to-WhatsApp flow with a test sender number.
-- Document reliability, failure modes, and the production risk clearly before Flutter.
-
-Not completed yet:
-
-- Full end-to-end validation with a real QR-linked sender session and receiver.
-- Flutter app.
-
-## Project Structure
-
-```text
-whatsapp_otp_poc/
-  backend/
-    app/
-      config.py
-      db.py
-      main.py
-      otp_service.py
-      otp_store.py
-      schemas.py
-      senders/
-        __init__.py
-        base.py
-        mock_sender.py
-    requirements.txt
-    .env.example
-  whatsapp-sender/
-    src/
-      index.js
-      senderManager.js
-      phone.js
-      messageTemplate.js
-    MANUAL_TESTING.md
-    package.json
-  PROJECT_CONTEXT.md
-  README.md
+```sh
+npm ci --prefix packages/otpigeon
+node packages/otpigeon/examples/order-notification.js
+node packages/otpigeon/examples/incoming-bot.js
+node packages/otpigeon/examples/otp-verification.js
+# Each example defaults to mock; no account or external message is involved.
+npm pack ./packages/otpigeon --pack-destination .local
 ```
 
-## Backend Setup
+The package includes explicit connection state, saved local sessions, exclusive session
+ownership, bounded queues, conservative unknown-send handling and TypeScript declarations.
+An [optional Node HTTP gateway](docs/messaging-gateway.md) adds encrypted durable jobs,
+project keys, event polling and signed webhooks over the same client.
 
-```bash
-cd backend
+The existing **0.2.0rc1 Python verification gateway** remains available with its operator
+dashboard and separate `otpigeon-sdk`. It supports project-scoped single-use challenges,
+transactional dispatch, official Meta authentication templates and optional Twilio SMS.
+Applications own their users, recipient consent and application sessions.
+
+## Run the verification gateway locally
+
+Requires Docker with Compose v2.24.4+ and Python 3.12+ for the environment generator.
+
+```sh
+git clone https://github.com/pransh-py/OTPigeon.git
+cd OTPigeon
+./scripts/dev.sh
+```
+
+Open [localhost:8000/dashboard](http://localhost:8000/dashboard). Sign in with `OTPIGEON_ADMIN_TOKEN` from the generated `.env`, create a project, and try a test verification. The worker delivers a simulated code to the project's test outbox. No external message is sent.
+
+The script creates a private `.env` only when absent, and a project-scoped Docker volume. It preserves existing files, databases, and WhatsApp sessions. If upgrading an M1 installation, add a separate random `OTPIGEON_ADMIN_TOKEN` to its existing `.env`; restarting never generates or replaces your root secret. Do not run `down -v` on a deployment whose data you need.
+
+## Install the Python application
+
+Build and install from source (Python 3.12–3.13 are checked in CI):
+
+```sh
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+. .venv/bin/activate
+pip install .
+otpigeon init
+# Set MONGODB_URL in .env to your MongoDB replica set.
+otpigeon serve
+# In another terminal, with the same environment:
+otpigeon worker
 ```
 
-Health check:
+A MongoDB **replica set** is required, including for a single database node. Standalone MongoDB is rejected at startup. The Compose setup initializes one automatically. `otpigeon serve` binds localhost by default. Use a TLS reverse proxy and an authenticated external database for a shared installation.
 
-```bash
-curl http://127.0.0.1:8000/health
+CLI: `otpigeon --help`, `otpigeon admin --help`, `otpigeon worker --once`, and `otpigeon prune` (preview only; `--apply` deletes eligible retained history).
+
+## Integrate from your backend
+
+Issue a test key in the dashboard, or locally:
+
+```sh
+docker compose exec api otpigeon admin create-project --name 'My application'
+docker compose exec api otpigeon admin issue-key --project PROJECT_ID --environment test
 ```
 
-Expected response:
+The key is displayed once; only its digest is stored. Build the dependency-free SDK tarball with `npm pack ./sdk --pack-destination .local`, then install that tarball in your Node.js 22+ backend. See [SDK documentation](sdk/README.md).
 
-```json
-{"status":"ok"}
+```js
+import {OTPigeon} from 'otpigeon-sdk';
+const gateway = new OTPigeon({
+  baseUrl: 'http://localhost:8000',
+  apiKey: process.env.OTPIGEON_API_KEY,
+});
+const challenge = await gateway.create(
+  {destination: '+15555550123', purpose: 'signup'},
+  {idempotencyKey: 'your-pending-login-attempt-id'},
+);
+// Bind challenge.challenge_id to your server-side pending login record.
+const result = await gateway.verify(challenge.challenge_id, userSuppliedCode);
+if (result.verified) {
+  // Check destination/purpose/project against that pending record, then create your session.
+}
 ```
 
-Request OTP:
+`verified: false` is a normal HTTP 200 result for an unsuccessful verification; check the boolean. A consumed challenge cannot grant another session. Store the successful authentication result in your own flow so a lost HTTP response does not make the same challenge reusable.
 
-```bash
-curl -X POST http://127.0.0.1:8000/otp/request \
-  -H "Content-Type: application/json" \
-  -d '{"sender_phone":"+918637427358","phone":"+919876543210"}'
+Run the complete simulated developer flow:
+
+```sh
+export OTPIGEON_API_KEY='YOUR_TEST_KEY'
+node examples/sdk-flow.mjs
+# Or: python examples/sample_backend.py
 ```
 
-The mock sender prints the generated OTP in the backend console:
+Use stable idempotency keys when retrying create/resend after a network failure. The SDK never retries a mutation automatically. API keys belong on your backend, never in browser/mobile bundles. See [the API and state reference](DOCUMENTATION.md), interactive `/docs`, and `/openapi.json`.
 
-```text
-[MOCK OTP] sender_phone=+918637427358 receiver_phone=+919876543210 otp=123456
+## Enable real delivery
+
+1. Open Delivery provider in the dashboard and configure the project's live provider.
+2. Set `OTPIGEON_PUBLIC_BASE_URL` to the externally reachable HTTPS origin and `OTPIGEON_ALLOW_LIVE_DELIVERY=true` in the API and worker environments, then restart both.
+3. Configure the provider's signed delivery callbacks, issue a live key, and perform a controlled delivery to a consenting recipient.
+
+Meta requires your own approved authentication template, sender, supported Graph API version, and credentials. Twilio requires your own sender and credentials. OTPigeon is free software; provider charges, approvals, and account policies still apply. [Provider setup and callback contracts](docs/providers.md) explain the required fields. Live account linking and paid messages are never part of automated checks.
+
+## Multiple API and worker processes
+
+```sh
+docker compose -f compose.yaml -f compose.distributed.yaml up --build -d --wait
 ```
 
-Resend OTP:
+This starts Nginx, two API instances, two workers, and the shared database. APIs keep no challenge/session state in process memory. MongoDB transactions serialize each project/environment's verification decisions; workers claim durable jobs with fencing tokens. A dead worker's reserved job can be reclaimed. A send interrupted after dispatch starts becomes **unknown**, preventing an automatic duplicate send. Confirmed receipts can resolve delivery later.
 
-```bash
-curl -X POST http://127.0.0.1:8000/otp/resend \
-  -H "Content-Type: application/json" \
-  -d '{"sender_phone":"+918637427358","phone":"+919876543210"}'
+This Compose demonstration has a **single MongoDB node and one host**. Use an authenticated multi-node replica set across failure domains for database/host resilience. It does not promise exactly-once external delivery, unlimited per-project throughput, or cross-region active/active writes. [Architecture and operations](docs/operations.md) cover the boundaries and recovery steps.
+
+## Verification and contribution
+
+```sh
+pip install -r backend/requirements-dev.txt
+export OTPIGEON_TEST_MONGODB_URL='mongodb://127.0.0.1:27017/?replicaSet=YOUR_DISPOSABLE_SET'
+python -m pytest backend/tests -q
+ruff check backend/otpigeon backend/tests scripts
+ruff format --check backend/otpigeon backend/tests scripts
+npm ci --ignore-scripts --prefix sdk
+npm test --prefix sdk
+pip-audit -r backend/requirements.txt
+python -m build
+python -m twine check dist/*
 ```
 
-Verify OTP:
+Tests create random databases prefixed `otpigeon_test_` and remove only those databases. Use a separate test replica set. See [release verification](docs/verification/release-0.2.md), [contribution guide](CONTRIBUTING.md), [security policy](SECURITY.md), and [release procedure](docs/releasing.md).
 
-```bash
-curl -X POST http://127.0.0.1:8000/otp/verify \
-  -H "Content-Type: application/json" \
-  -d '{"phone":"+919876543210","otp":"123456"}'
-```
+## Original proof of concept
 
-Expected successful response:
-
-```json
-{"verified":true,"message":"otp verified successfully"}
-```
-
-## Config
-
-Sample config is documented in `backend/.env.example`.
-
-```env
-MONGODB_URL=mongodb://localhost:27017
-MONGODB_DB_NAME=whatsapp_otp_poc
-OTP_EXPIRY_SECONDS=300
-OTP_RESEND_COOLDOWN_SECONDS=60
-OTP_MAX_VERIFY_ATTEMPTS=5
-OTP_SENDER_MODE=mock
-WHATSAPP_SENDER_URL=http://127.0.0.1:3001
-WHATSAPP_SENDER_API_KEY=local-dev-key
-WHATSAPP_SENDER_TIMEOUT_SECONDS=10
-```
-
-Do not commit a real `.env` file.
-
-## WhatsApp Sender Setup
-
-The Node sender service is in `whatsapp-sender/`.
-
-```bash
-cd whatsapp-sender
-npm install
-npm start
-```
-
-The service listens on `http://127.0.0.1:3001` by default.
-
-Register a sender session through FastAPI:
-
-```bash
-curl -X POST http://127.0.0.1:8000/set-sender \
-  -H "Content-Type: application/json" \
-  -d '{"sender_phone":"+918637427358"}'
-```
-
-If the sender needs login, scan the QR from the Node terminal or call:
-
-```bash
-curl http://127.0.0.1:8000/senders/918637427358/qr
-```
-
-Poll status until `ready` is `true`:
-
-```bash
-curl http://127.0.0.1:8000/senders/918637427358/status
-```
-
-For detailed direct Node-service tests, see `whatsapp-sender/MANUAL_TESTING.md`.
-
-## Next Steps
-
-1. Run the Node sender service.
-2. Register a test sender number with `POST /set-sender`.
-3. Scan the QR and confirm the sender reaches `ready: true`.
-4. Set `OTP_SENDER_MODE=whatsapp` in `backend/.env`.
-5. Validate `POST /otp/request`, WhatsApp delivery, and `POST /otp/verify`.
-6. Document setup, limitations, failure modes, and account-ban/platform-term risks.
-7. Defer Flutter until WhatsApp delivery feasibility is tested.
+The `whatsapp-sender/` WhatsApp Web automation and opt-in legacy Python routes are retained for historical experimentation. They are not the supported delivery path. The Node sender is excluded from server wheels, SDK tarballs, and containers; it has known upstream dependency advisories. Never share its browser-auth sessions between replicas. See [security limitations](SECURITY.md) before running it.

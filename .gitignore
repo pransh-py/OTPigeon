@@ -23,3 +23,16 @@ node_modules/
 .DS_Store
 .vscode/
 .idea/
+
+# Disposable labs, verification media, and local planning evidence
+.local/
+.pytest_cache/
+
+# Release build outputs
+dist/
+*.egg-info/
+.ruff_cache/
+*.tgz
+
+# Embedded client sessions and optional Node gateway state
+.otpigeon/

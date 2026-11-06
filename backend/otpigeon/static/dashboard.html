@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>OTPigeon · Verification gateway</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="/static/dashboard.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#workspace">Skip to workspace</a>
+  <div id="notice" role="status" aria-live="polite" hidden></div>
+  <main id="login" class="login" hidden>
+    <div class="wordmark">OTPigeon<span class="brand-mark">↗</span></div>
+    <h1>Your verification workspace.</h1>
+    <p>Manage applications and follow every code from request to verification.</p>
+    <form id="login-form">
+      <label for="operator-token">Operator token</label>
+      <input id="operator-token" type="password" autocomplete="current-password" required maxlength="256" aria-describedby="login-help">
+      <p id="login-help" class="hint">Use the operator token from your installation’s environment file. Application API keys are separate.</p>
+      <button type="submit" class="primary">Open workspace</button>
+    </form>
+    <a href="/docs">Explore the API</a>
+  </main>
+  <div id="application" class="application" hidden>
+    <aside class="sidebar">
+      <a class="wordmark" href="/dashboard">OTPigeon<span class="brand-mark">↗</span></a>
+      <p class="sidebar-caption">Verification gateway</p>
+      <div class="project-picker"><label for="project">Application</label><select id="project" aria-label="Application"></select><button id="new-project" class="subtle">New project</button></div>
+      <nav aria-label="Workspace">
+        <button data-view="overview" aria-current="page">Overview</button>
+        <button data-view="challenges">Challenges</button>
+        <button data-view="keys">API keys</button>
+        <button data-view="provider">Delivery provider</button>
+        <button data-view="integration">Integration</button>
+      </nav>
+      <div class="sidebar-bottom"><a href="https://github.com/pransh-py/OTPigeon" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a><button id="logout" class="subtle">Sign out</button></div>
+    </aside>
+    <main id="workspace" tabindex="-1" class="workspace">
+      <header class="workspace-header"><div><p id="project-name" class="context"></p><h1 id="view-title">Overview</h1></div><div class="toolbar"><label for="environment" class="sr-only">Environment</label><select id="environment"><option value="test">Test environment</option><option value="live">Live environment</option></select><button id="refresh" class="secondary">Refresh</button></div></header>
+      <div id="installation-status" class="installation-status" role="status"></div>
+      <section id="view" aria-label="Workspace content"></section>
+      <footer class="workspace-footer">Self-hosted. Your providers, your verification history.<a href="/openapi.json">OpenAPI specification ↗</a></footer>
+    </main>
+  </div>
+  <dialog id="modal" aria-labelledby="modal-title"><div class="modal-heading"><h2 id="modal-title"></h2><button id="close-modal" class="subtle" aria-label="Close dialog">Close</button></div><div id="modal-body"></div></dialog>
+</body>
+</html>
